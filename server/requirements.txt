@@ -1,0 +1,26 @@
+fastapi
+uvicorn
+python-dotenv
+pydantic
+passlib
+python-jose
+beanie
+# motor
+# pymongo
+# passlib[bcrypt] 
+# python-jose[cryptography]
+# pydantic[email]
+# supabase
+# python-multipart
+# PyMuPDF
+# python-docx
+# python-doc
+# spacy
+# nltk
+# transformers
+# torch
+# torchvision
+# torchaudio
+# # hf_xet
+# slowapi
+# python-magic
