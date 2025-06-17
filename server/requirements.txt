@@ -1,26 +1,88 @@
-fastapi
-uvicorn
-python-dotenv
-pydantic
-passlib
-python-jose
-beanie
-# motor
-# pymongo
-# passlib[bcrypt] 
-# python-jose[cryptography]
-# pydantic[email]
-# supabase
-# python-multipart
-# PyMuPDF
-# python-docx
-# python-doc
-# spacy
-# nltk
-# transformers
-# torch
-# torchvision
-# torchaudio
-# # hf_xet
-# slowapi
-# python-magic
+# Core FastAPI and Server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# Authentication & Security (your existing)
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-decouple==3.8
+
+# Database - MongoDB
+motor==3.3.2
+pymongo==4.6.0
+beanie==1.23.6
+
+# Machine Learning - Core
+scikit-learn==1.3.2
+pandas==2.1.4
+numpy==1.25.2
+joblib==1.3.2
+
+# ML Explainability
+shap==0.44.1
+lime==0.2.0.1
+
+# Data Processing & Validation
+pydantic==2.5.2
+pydantic-settings==2.1.0
+
+# OpenRouter/LLM Integration
+openai==1.6.1
+httpx==0.25.2
+aiohttp==3.9.1
+
+# Excel/Data File Processing
+openpyxl==3.1.2
+xlrd==2.0.1
+
+# Caching (optional but recommended)
+redis==5.0.1
+python-redis-lock==4.0.0
+
+# Background Tasks & Scheduling
+celery==5.3.4
+apscheduler==3.10.4
+
+# Logging & Monitoring
+python-json-logger==2.0.7
+structlog==23.2.0
+
+# Email (for notifications - optional)
+fastapi-mail==1.4.1
+
+# Development & Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+httpx==0.25.2
+faker==20.1.0
+
+# Environment & Configuration
+python-dotenv==1.0.0
+
+# Data Visualization (for model analysis)
+matplotlib==3.8.2
+seaborn==0.13.0
+plotly==5.17.0
+
+# Statistical Analysis
+scipy==1.11.4
+statsmodels==0.14.1
+
+# API Documentation Enhancement
+python-markdown==3.5.1
+
+# Utilities
+python-dateutil==2.8.2
+pytz==2023.3
+requests==2.31.0
+
+# File Handling
+aiofiles==23.2.1
+
+# Input Validation & Sanitization
+email-validator==2.1.0
+phonenumbers==8.13.25
+
+# Performance & Optimization
+orjson==3.9.10
