@@ -5,6 +5,7 @@ from datetime import datetime
 
 class UserDetails(Document):
     user_id: str
+    address: Optional[str] = None
     occupation: Optional[str] = None
     income: Optional[float] = None 
     created_at: datetime = Field(default_factory=datetime.now)

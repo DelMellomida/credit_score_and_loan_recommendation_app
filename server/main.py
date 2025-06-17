@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from app.database import init_db
+from app.api import auth_router
 
 app = FastAPI(
     title="Credit Score and Loan Recommendation",
@@ -18,3 +19,4 @@ async def lifespan(app: FastAPI):
 async def read_root():
     return {"message": "Hello World"}
 
+app.include_router(auth_router)
