@@ -11,15 +11,18 @@ def is_valid_password(password: str) -> bool:
 
 def hash_password(password: str) -> str:
     if not is_valid_password(password):
-        try:
-            return pwd_context.hash(password)
-        except Exception as e:
-            raise ValueError("Invalid password") from e
+        raise ValueError("Password must be at least 8 characters long")
+    
+    try:
+        return pwd_context.hash(password)
+    except Exception as e:
+        raise ValueError("Failed to hash password") from e
 
 def verify_password(password: str, hashed_password: str) -> bool:
     try:
         return pwd_context.verify(password, hashed_password)
     except Exception as e:
+        print(f"Password verification error: {e}")  # For debugging
         return False
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

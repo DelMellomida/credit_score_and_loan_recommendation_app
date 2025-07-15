@@ -1,2 +1,1 @@
-from .user import UserCreate, UserUpdate, UserDelete, UserOut, UserLogin
-from .user_details import UserDetailsCreate, UserDetailsUpdate, UserDetailOut, UserDetailDelete
+from .user_schemas import UserCreate, UserResponse, Token, TokenData

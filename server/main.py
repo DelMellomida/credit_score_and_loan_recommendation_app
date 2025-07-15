@@ -1,22 +1,55 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.api.auth_routes import router as auth_router
 from contextlib import asynccontextmanager
-from app.database import init_db
-from app.api import auth_router
-
-app = FastAPI(
-    title="Credit Score and Loan Recommendation",
-    description="This is a API for credit score and loan recommendation",
-    version="0.0.1",
-)
+from app.database.connection import init_db
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     yield
-    pass
+
+app = FastAPI(
+    title="Auth System API",
+    description="A simple authentication system with FastAPI",
+    version="1.0.0",
+    lifespan=lifespan  # Add this line to use the lifespan context manager
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Change this in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include routers
+app.include_router(auth_router)
 
 @app.get("/")
-async def read_root():
-    return {"message": "Hello World"}
+async def root():
+    return {"message": "Auth System API is running!"}
 
-app.include_router(auth_router)
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "message": "API is running"}
+
+# Add this to debug available routes
+@app.get("/debug/routes")
+async def debug_routes():
+    """Debug endpoint to see all available routes"""
+    routes = []
+    for route in app.routes:
+        if hasattr(route, 'methods') and hasattr(route, 'path'):
+            routes.append({
+                "path": route.path,
+                "methods": list(route.methods),
+                "name": getattr(route, 'name', 'N/A')
+            })
+    return {"routes": routes}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
