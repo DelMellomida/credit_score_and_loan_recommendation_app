@@ -36,7 +36,7 @@ class ModelInputData(BaseModel):
     Net_Salary_Per_Cutoff: float = Field(..., description="Net salary per cutoff")
     Salary_Frequency: SalaryFrequencyEnum = Field(..., description="Salary frequency of the applicant")
     Housing_Status: HousingStatusEnum = Field(..., description="Housing status of the applicant")
-    Years_At_Current_Address: int = Field(..., description="Years at current address")
+    Years_at_Current_Address: int = Field(..., description="Years at current address")
     Household_Head: YesNoEnum = Field(..., description="Indicates if the applicant is the household head")
     Number_of_Dependents: int = Field(..., description="Number of dependents of the applicant")
     Comaker_Relationship: ComakerRelationshipEnum = Field(..., description="Relationship of the co-maker to the applicant")
@@ -48,7 +48,7 @@ class ModelInputData(BaseModel):
     Disaster_Preparedness: DisasterPreparednessEnum = Field(..., description="Disaster preparedness of the applicant")
     Is_Renewing_Client: int = Field(..., description="Indicates if the applicant is a renewing client")
     Grace_Period_Usage_Rate: float = Field(..., description="Grace period usage rate of the applicant")
-    Late_Payment_Rate: float = Field(..., description="Late payment rate of the applicant")
+    Late_Payment_Count: float = Field(..., description="Late payment rate of the applicant")
     Had_Special_Consideration: int = Field(..., description="Indicates if the applicant had special consideration in the past")
 
 class LoanApplication(Document):

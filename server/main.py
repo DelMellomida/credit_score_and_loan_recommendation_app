@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth_routes import router as auth_router
+from app.api.loan_routes import router as loan_router
 from contextlib import asynccontextmanager
 from app.database.connection import init_db
 
@@ -10,8 +11,8 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(
-    title="Auth System API",
-    description="A simple authentication system with FastAPI",
+    title="Credit Scoring and Loan Recommendation",
+    description="Credit Scoring and Loan Recommendation",
     version="1.0.0",
     lifespan=lifespan  # Add this line to use the lifespan context manager
 )
@@ -27,6 +28,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(auth_router)
+app.include_router(loan_router)
 
 @app.get("/")
 async def root():

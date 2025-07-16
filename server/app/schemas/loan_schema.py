@@ -76,3 +76,20 @@ class FullLoanApplicationRequest(BaseModel):
     applicant_info: ApplicantInfoRequest
     comaker_info: CoMakerInfoRequest
     model_input_data: LoanApplicationRequest
+
+class PredictionResult(BaseModel):
+    """Schema for the prediction result."""
+    final_credit_score: int
+    probability_of_default: float
+    loan_recommendation: List[str]
+    status: str = Field(default="Pending", description="Status of the prediction result")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "final_credit_score": 750,
+                "probability_of_default": 0.05,
+                "loan_recommendation": "Approved",
+                "status": "Pending"
+            }
+        }
