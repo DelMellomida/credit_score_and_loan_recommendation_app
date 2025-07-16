@@ -60,21 +60,22 @@ class LoanApplicationRequest(BaseModel):
     Late_Payment_Count: int = Field(0, ge=0)
     Had_Special_Consideration: int = Field(0, ge=0, le=1)
 
-class ApplicantInfoRequest(BaseModel):
+class ApplicantInfo(BaseModel):
     """Schema for the applicant's personal info."""
     full_name: str
     contact_number: str
     address: str
+    salary: str
 
-class CoMakerInfoRequest(BaseModel):
+class CoMakerInfo(BaseModel):
     """Schema for the co-maker's personal info."""
     full_name: str
     contact_number: str
 
 class FullLoanApplicationRequest(BaseModel):
     """The complete request body for creating a new loan application record."""
-    applicant_info: ApplicantInfoRequest
-    comaker_info: CoMakerInfoRequest
+    applicant_info: ApplicantInfo
+    comaker_info: CoMakerInfo
     model_input_data: LoanApplicationRequest
 
 class PredictionResult(BaseModel):

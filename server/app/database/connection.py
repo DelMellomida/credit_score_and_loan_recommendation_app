@@ -1,6 +1,6 @@
 import motor.motor_asyncio
 from beanie import init_beanie
-from app.database.models import User
+from app.database.models import User, LoanApplication
 from app.core import Settings  # Use your existing import
 import logging
 
@@ -44,7 +44,7 @@ async def init_db():
         
         # Initialize Beanie with document models
         logger.info("Initializing Beanie with User model...")
-        await init_beanie(database, document_models=[User])
+        await init_beanie(database, document_models=[User, LoanApplication])
         logger.info("Beanie initialized successfully!")
         
         return database

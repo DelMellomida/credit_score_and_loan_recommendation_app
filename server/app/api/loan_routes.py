@@ -1,250 +1,303 @@
 from fastapi import APIRouter, HTTPException, status, Depends
-from app.services.prediction_service import prediction_service, PredictionService
-from app.schemas.loan_schema import LoanApplicationRequest, PredictionResult
-from typing import Dict, Any, Optional
+from app.services.loan_service import LoanApplicationService, loan_application_service
+from app.schemas.loan_schema import FullLoanApplicationRequest
+from app.database.models.loan_application_model import LoanApplication, ApplicantInfo, CoMakerInfo, ModelInputData
+from typing import Dict, Any, List
 import logging
+from uuid import UUID
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
-def get_prediction_service() -> PredictionService:
+def get_loan_application_service() -> LoanApplicationService:
     """
-    Dependency to get the prediction service instance.
+    Dependency to get the loan application service instance.
     
     Raises:
-        HTTPException: If prediction service is not initialized
+        HTTPException: If loan application service is not initialized
     """
-    if prediction_service is None:
-        logger.error("Prediction service is not initialized")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,  # More appropriate than 500
-            detail="Prediction service is not initialized. Please contact system administrator."
-        )
-    
-    # Additional check to ensure service is ready
-    if not prediction_service._is_service_ready():
-        logger.error("Prediction service is not ready")
+    if loan_application_service is None:
+        logger.error("Loan application service is not initialized")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Prediction service is not ready. Required model components are not loaded."
+            detail="Loan application service is not initialized. Please contact system administrator."
         )
     
-    return prediction_service
+    return loan_application_service
 
-router = APIRouter(prefix="/prediction", tags=["Predictions"])
+router = APIRouter(prefix="/loans", tags=["Loan Applications"])
 
-@router.post("/predict", response_model=PredictionResult, status_code=status.HTTP_200_OK)
-async def get_credit_score(
-    input_data: LoanApplicationRequest,
-    service: PredictionService = Depends(get_prediction_service)
-) -> PredictionResult:
+@router.post("/applications", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
+async def create_loan_application(
+    request_data: FullLoanApplicationRequest,
+    service: LoanApplicationService = Depends(get_loan_application_service)
+):
     """
-    Generate credit score and loan recommendation based on input data.
-    
-    Args:
-        input_data: Loan application request data
-        service: Prediction service instance
-        
-    Returns:
-        PredictionResult: Contains credit score, probability of default, and recommendation
-        
-    Raises:
-        HTTPException: Various HTTP errors based on the type of failure
+    Creates a new loan application, runs the assessment, 
+    and saves the complete record to the database.
+    Returns the application details along with prediction results.
     """
     try:
-        logger.info("Starting credit score prediction")
+        logger.info("Starting loan application creation process")
         
-        # Validate input data is not None (FastAPI should handle this, but extra safety)
-        if input_data is None:
-            logger.error("Input data is None")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Input data is required"
-            )
+        # In a real application, this would come from the authenticated user
+        loan_officer_id = "loan_officer_abc_123"  # Replace with current_user.id
         
-        # Get probability of default
+        logger.info("Converting request data to database models")
+        
+        # Convert request schemas to database model schemas
         try:
-            pod_result = service.predict(input_data)
-            pod = pod_result.get("probability_of_default")
-            
-            if pod is None:
-                logger.error("Prediction service returned None for probability_of_default")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Prediction service returned invalid result"
-                )
-                
-        except ValueError as e:
-            logger.error(f"Input validation error: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid input data: {str(e)}"
+            applicant_info = ApplicantInfo(
+                full_name=request_data.applicant_info.full_name,
+                contact_number=request_data.applicant_info.contact_number,
+                address=request_data.applicant_info.address,
+                salary=request_data.applicant_info.salary
             )
-        except RuntimeError as e:
-            logger.error(f"Runtime error during prediction: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Prediction failed: {str(e)}"
-            )
-
-        # Transform probability to credit score
-        try:
-            credit_score = service.transform_pod_to_credit_score(pod)
-        except (ValueError, TypeError) as e:
-            logger.error(f"Credit score transformation error: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Credit score calculation failed: {str(e)}"
-            )
+            logger.info("ApplicantInfo created successfully")
         except Exception as e:
-            logger.error(f"Unexpected error in credit score transformation: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Credit score calculation failed due to unexpected error"
-            )
-
-        # Generate loan recommendation based on credit score
-        try:
-            loan_recommendation = _generate_loan_recommendation(credit_score, pod)
-        except Exception as e:
-            logger.error(f"Error generating loan recommendation: {e}")
-            # Don't fail the entire request for recommendation errors
-            loan_recommendation = ["Unable to generate recommendation"]
-
-        # Validate results before returning
-        if not (0 <= pod <= 1):
-            logger.warning(f"Probability of default {pod} is outside valid range [0,1]")
-            
-        if not (300 <= credit_score <= 850):  # Assuming standard credit score range
-            logger.warning(f"Credit score {credit_score} is outside typical range [300,850]")
-
-        logger.info(f"Prediction completed successfully. Credit Score: {credit_score}, POD: {pod:.4f}")
+            logger.error(f"Error creating ApplicantInfo: {e}")
+            raise ValueError(f"Error in applicant info: {e}")
         
-        return PredictionResult(
-            final_credit_score=credit_score,
-            probability_of_default=pod,
-            loan_recommendation=loan_recommendation,
-            status="Success"
+        try:
+            comaker_info = CoMakerInfo(
+                full_name=request_data.comaker_info.full_name,
+                contact_number=request_data.comaker_info.contact_number
+            )
+            logger.info("CoMakerInfo created successfully")
+        except Exception as e:
+            logger.error(f"Error creating CoMakerInfo: {e}")
+            raise ValueError(f"Error in comaker info: {e}")
+        
+        try:
+            model_input_data = ModelInputData(
+                Employment_Sector=request_data.model_input_data.Employment_Sector,
+                Employment_Tenure_Months=request_data.model_input_data.Employment_Tenure_Months,
+                Net_Salary_Per_Cutoff=request_data.model_input_data.Net_Salary_Per_Cutoff,
+                Salary_Frequency=request_data.model_input_data.Salary_Frequency,
+                Housing_Status=request_data.model_input_data.Housing_Status,
+                Years_at_Current_Address=request_data.model_input_data.Years_at_Current_Address,
+                Household_Head=request_data.model_input_data.Household_Head,
+                Number_of_Dependents=request_data.model_input_data.Number_of_Dependents,
+                Comaker_Relationship=request_data.model_input_data.Comaker_Relationship,
+                Comaker_Employment_Tenure_Months=request_data.model_input_data.Comaker_Employment_Tenure_Months,
+                Comaker_Net_Salary_Per_Cutoff=request_data.model_input_data.Comaker_Net_Salary_Per_Cutoff,
+                Has_Community_Role=request_data.model_input_data.Has_Community_Role,
+                Paluwagan_Participation=request_data.model_input_data.Paluwagan_Participation,
+                Other_Income_Source=request_data.model_input_data.Other_Income_Source,
+                Disaster_Preparedness=request_data.model_input_data.Disaster_Preparedness,
+                Is_Renewing_Client=request_data.model_input_data.Is_Renewing_Client,
+                Grace_Period_Usage_Rate=request_data.model_input_data.Grace_Period_Usage_Rate,
+                Late_Payment_Count=request_data.model_input_data.Late_Payment_Count,
+                Had_Special_Consideration=request_data.model_input_data.Had_Special_Consideration
+            )
+            logger.info("ModelInputData created successfully")
+        except Exception as e:
+            logger.error(f"Error creating ModelInputData: {e}")
+            raise ValueError(f"Error in model input data: {e}")
+        
+        # Create the loan application
+        try:
+            logger.info("Creating LoanApplication document")
+            loan_application = LoanApplication(
+                loan_officer_id=loan_officer_id,
+                applicant_info=applicant_info,
+                comaker_info=comaker_info,
+                model_input_data=model_input_data
+            )
+            logger.info("LoanApplication document created successfully")
+        except Exception as e:
+            logger.error(f"Error creating LoanApplication document: {e}")
+            raise ValueError(f"Error creating loan application: {e}")
+        
+        # Run prediction using the service
+        try:
+            logger.info("Running prediction for loan application")
+            prediction_result = await service._run_prediction(model_input_data)
+            
+            # Add prediction result to the loan application
+            loan_application.prediction_result = prediction_result
+            logger.info("Prediction completed and added to loan application")
+        except Exception as e:
+            logger.error(f"Error during prediction: {e}")
+            raise RuntimeError(f"Prediction failed: {e}")
+        
+        # Save to database
+        try:
+            logger.info("Saving loan application to database")
+            await loan_application.save()
+            logger.info("Loan application saved to database successfully")
+        except Exception as e:
+            logger.error(f"Error saving to database: {e}")
+            raise RuntimeError(f"Database error: {e}")
+        
+        logger.info(f"Loan application created successfully with ID: {loan_application.application_id}")
+        
+        return {
+            "message": "Loan application created successfully",
+            "application_id": str(loan_application.application_id),
+            "timestamp": loan_application.timestamp.isoformat(),
+            "status": "created",
+            "prediction_result": {
+                "final_credit_score": prediction_result.final_credit_score,
+                "probability_of_default": prediction_result.probability_of_default,
+                "loan_recommendation": prediction_result.loan_recommendation,
+                "status": prediction_result.status
+            },
+            "applicant_info": {
+                "full_name": loan_application.applicant_info.full_name,
+                "contact_number": loan_application.applicant_info.contact_number,
+                "address": loan_application.applicant_info.address,
+                "salary": loan_application.applicant_info.salary
+            },
+            "loan_officer_id": loan_application.loan_officer_id
+        }
+        
+    except ValueError as e:
+        logger.error(f"Validation error during application creation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail=f"Invalid loan application data: {str(e)}"
+        )
+    except RuntimeError as e:
+        logger.error(f"Runtime error during application creation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error during application creation: {e}")
+        logger.error(f"Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
         )
 
+@router.get("/applications/{application_id}", response_model=LoanApplication)
+async def get_loan_application(
+    application_id: UUID,
+    service: LoanApplicationService = Depends(get_loan_application_service)
+):
+    """
+    Retrieve a specific loan application by ID.
+    """
+    try:
+        application = await service.get_loan_application(application_id)
+        if not application:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Loan application with ID {application_id} not found"
+            )
+        return application
     except HTTPException:
-        # Re-raise HTTPExceptions as-is
         raise
     except Exception as e:
-        # Catch any other unexpected errors
-        logger.error(f"Unexpected error in prediction endpoint: {e}")
+        logger.error(f"Error retrieving loan application {application_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred while processing the prediction"
+            detail="An error occurred while retrieving the application"
         )
 
-def _generate_loan_recommendation(credit_score: int, pod: float) -> list[str]:
+@router.get("/applications", response_model=List[LoanApplication])
+async def get_loan_applications(
+    skip: int = 0,
+    limit: int = 100,
+    loan_officer_id: str = None,
+    service: LoanApplicationService = Depends(get_loan_application_service)
+):
     """
-    Generate loan recommendations based on credit score and probability of default.
-    
-    Args:
-        credit_score: Calculated credit score
-        pod: Probability of default
-        
-    Returns:
-        List of recommendation strings
-    """
-    recommendations = []
-    
-    try:
-        if credit_score >= 750:
-            recommendations.extend([
-                "Excellent credit profile",
-                "Eligible for premium loan products",
-                "Low interest rates available",
-                "High loan amount approval likely"
-            ])
-        elif credit_score >= 650:
-            recommendations.extend([
-                "Good credit profile",
-                "Standard loan products available",
-                "Moderate interest rates",
-                "Standard loan amount approval"
-            ])
-        elif credit_score >= 550:
-            recommendations.extend([
-                "Fair credit profile",
-                "Limited loan products available",
-                "Higher interest rates may apply",
-                "Lower loan amount or co-signer may be required"
-            ])
-        else:
-            recommendations.extend([
-                "Poor credit profile",
-                "High risk applicant",
-                "Loan approval unlikely",
-                "Consider improving credit history before reapplying"
-            ])
-        
-        # Add POD-specific recommendations
-        if pod > 0.5:
-            recommendations.append("High default risk - additional documentation required")
-        elif pod > 0.3:
-            recommendations.append("Moderate default risk - standard verification required")
-        else:
-            recommendations.append("Low default risk - expedited processing possible")
-            
-    except Exception as e:
-        logger.error(f"Error generating recommendations: {e}")
-        recommendations = ["Unable to generate specific recommendations"]
-    
-    return recommendations
-
-@router.get("/service-status", tags=["Health Check"])
-async def get_service_status(
-    service: PredictionService = Depends(get_prediction_service)
-) -> Dict[str, Any]:
-    """
-    Get the current status of the prediction service.
-    
-    Args:
-        service: Prediction service instance
-        
-    Returns:
-        Dict containing service status information
-        
-    Raises:
-        HTTPException: If service status cannot be retrieved
+    Retrieve loan applications with optional filtering and pagination.
     """
     try:
-        logger.info("Retrieving service status")
-        status_info = service.get_service_status()
-        
-        # Add additional status information
-        status_info.update({
-            "service_health": "healthy" if status_info.get("is_ready") else "unhealthy",
-            "timestamp": "2025-07-16T12:00:00Z",  # You might want to use actual timestamp
-            "version": "1.0.0"  # Add your service version
-        })
-        
-        logger.info("Service status retrieved successfully")
-        return status_info
-        
+        applications = await service.get_loan_applications(
+            skip=skip,
+            limit=limit,
+            loan_officer_id=loan_officer_id
+        )
+        return applications
     except Exception as e:
-        logger.error(f"Error retrieving service status: {e}")
+        logger.error(f"Error retrieving loan applications: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Unable to retrieve service status"
+            detail="An error occurred while retrieving applications"
+        )
+
+@router.put("/applications/{application_id}/status")
+async def update_application_status(
+    application_id: UUID,
+    status_update: Dict[str, str],
+    service: LoanApplicationService = Depends(get_loan_application_service)
+):
+    """
+    Update the status of a loan application.
+    """
+    try:
+        new_status = status_update.get("status")
+        if not new_status:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Status is required"
+            )
+        
+        updated_application = await service.update_application_status(
+            application_id=application_id,
+            new_status=new_status
+        )
+        
+        if not updated_application:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Loan application with ID {application_id} not found"
+            )
+        
+        return {"message": "Application status updated successfully"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating application status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while updating the application status"
+        )
+
+@router.delete("/applications/{application_id}")
+async def delete_loan_application(
+    application_id: UUID,
+    service: LoanApplicationService = Depends(get_loan_application_service)
+):
+    """
+    Delete a loan application by ID.
+    """
+    try:
+        deleted = await service.delete_loan_application(application_id)
+        if not deleted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Loan application with ID {application_id} not found"
+            )
+        
+        return {"message": "Loan application deleted successfully"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting loan application {application_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while deleting the application"
         )
 
 @router.get("/health", tags=["Health Check"])
 async def health_check() -> Dict[str, str]:
     """
-    Simple health check endpoint that doesn't require service initialization.
-    
-    Returns:
-        Dict with health status
+    Simple health check endpoint for the loan service.
     """
     try:
-        # Basic health check without depending on prediction service
         return {
             "status": "healthy",
-            "service": "prediction-api",
+            "service": "loan-api",
             "timestamp": "2025-07-16T12:00:00Z"
         }
     except Exception as e:
@@ -254,56 +307,23 @@ async def health_check() -> Dict[str, str]:
             detail="Health check failed"
         )
 
-# Additional utility endpoint for testing
-@router.post("/validate-input", tags=["Validation"])
-async def validate_input_data(
-    input_data: LoanApplicationRequest
+@router.get("/service-status", tags=["Health Check"])
+async def get_service_status(
+    service: LoanApplicationService = Depends(get_loan_application_service)
 ) -> Dict[str, Any]:
     """
-    Validate input data without running prediction.
-    
-    Args:
-        input_data: Loan application request data
-        
-    Returns:
-        Dict with validation results
+    Get the current status of the loan application service.
     """
     try:
-        logger.info("Validating input data")
+        logger.info("Retrieving loan service status")
+        status_info = await service.get_service_status()
         
-        # Convert to dict for validation
-        data_dict = input_data.model_dump()
-        
-        validation_results = {
-            "is_valid": True,
-            "errors": [],
-            "warnings": [],
-            "field_count": len(data_dict),
-            "data_summary": {}
-        }
-        
-        # Add basic validation checks
-        for field, value in data_dict.items():
-            if value is None:
-                validation_results["errors"].append(f"Field '{field}' is None")
-                validation_results["is_valid"] = False
-            elif isinstance(value, str) and value.strip() == "":
-                validation_results["errors"].append(f"Field '{field}' is empty")
-                validation_results["is_valid"] = False
-        
-        # Add data summary
-        validation_results["data_summary"] = {
-            "total_fields": len(data_dict),
-            "non_null_fields": sum(1 for v in data_dict.values() if v is not None),
-            "sample_fields": dict(list(data_dict.items())[:5])  # Show first 5 fields
-        }
-        
-        logger.info(f"Input validation completed. Valid: {validation_results['is_valid']}")
-        return validation_results
+        logger.info("Loan service status retrieved successfully")
+        return status_info
         
     except Exception as e:
-        logger.error(f"Input validation error: {e}")
+        logger.error(f"Error retrieving service status: {e}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Input validation failed: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to retrieve service status"
         )
