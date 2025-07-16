@@ -1,11 +1,15 @@
-from app.database.models.loan_application_model import LoanApplication, PredictionResult
-from app.schemas.loan_schema import FullLoanApplicationRequest
-from app.services.prediction_service import PredictionService, prediction_service
+from app.database.models.loan_application_model import LoanApplication, PredictionResult, AIExplanation
 import logging
 from fastapi import HTTPException, status
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 from datetime import datetime
+
+from app.schemas.loan_schema import FullLoanApplicationRequest, RecommendedProducts, ApplicantInfo as ApplicantInfoSchema
+from app.loan_product import LOAN_PRODUCTS_CATALOG
+
+from app.services.prediction_service import PredictionService, prediction_service
+from app.services.ai_service import AIExplainabilityService, ai_service
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +26,14 @@ class LoanApplicationService:
             prediction_service: The prediction service instance
         """
         self.prediction_service = prediction_service
+        self.ai_service = ai_service
         logger.info("LoanApplicationService initialized")
 
     async def create_loan_application(
         self, 
         request_data: FullLoanApplicationRequest, 
         loan_officer_id: str
-    ) -> LoanApplication:
+    ) -> Dict[str, Any]:
         """
         Create a new loan application record with prediction results.
         
@@ -37,7 +42,7 @@ class LoanApplicationService:
             loan_officer_id: ID of the loan officer handling the application
             
         Returns:
-            LoanApplication: The created loan application with prediction results
+            Dict containing the created loan application and prediction result
             
         Raises:
             ValueError: If input validation fails
@@ -64,6 +69,9 @@ class LoanApplicationService:
             # Save to database
             await new_application.insert()
             
+            # Generate and save AI explanation asynchronously
+            await self._generate_and_save_explanation(new_application)
+            
             logger.info(f"Loan application created successfully with ID: {new_application.application_id}")
             return {
                 "application": new_application,
@@ -76,6 +84,45 @@ class LoanApplicationService:
         except Exception as e:
             logger.error(f"Error creating loan application: {e}")
             raise RuntimeError(f"Failed to create loan application: {str(e)}")
+        
+    async def _generate_and_save_explanation(self, application: LoanApplication) -> Optional[AIExplanation]:
+        """
+        Generate and save AI explanation for the loan application.
+        
+        Args:
+            application: The loan application to generate explanation for
+            
+        Returns:
+            Optional[AIExplanation]: The generated explanation or None if failed
+        """
+        if not self.ai_service:
+            logger.warning("AIExplainabilityService is not available, skipping explanation generation")
+            return None
+        
+        try:
+            logger.info(f"Generating AI explanation for application ID: {application.application_id}")
+            
+            prediction_result_dict = application.prediction_result.model_dump()
+            
+            # This is a synchronous call (removed await)
+            explanation_dict = self.ai_service.generate_loan_explanation(
+                application_data=application.model_input_data,
+                prediction_results=prediction_result_dict
+            )
+
+            # Handle potential failure from the AI service
+            if not explanation_dict or "technical_explanation" not in explanation_dict:
+                logger.error(f"AI service failed to return a valid explanation dict. Got: {explanation_dict}")
+                return None 
+
+            ai_explanation = AIExplanation(**explanation_dict)
+            application.ai_explanation = ai_explanation
+            await application.save()
+            logger.info(f"AI explanation generated and saved successfully for application ID: {application.application_id}")
+            return ai_explanation
+        except Exception as e:
+            logger.error(f"Error generating AI explanation for application {application.application_id}: {e}", exc_info=True)
+            return None
 
     async def get_loan_application(self, application_id: UUID) -> Optional[LoanApplication]:
         """
@@ -313,6 +360,7 @@ class LoanApplicationService:
             # Run prediction
             pod_result = self.prediction_service.predict(model_input_data)
             pod = pod_result.get("probability_of_default")
+            default = pod_result.get("default_prediction")
             
             if pod is None:
                 raise RuntimeError("Prediction service returned invalid result")
@@ -320,14 +368,12 @@ class LoanApplicationService:
             # Transform to credit score
             credit_score = self.prediction_service.transform_pod_to_credit_score(pod)
             
-            # Generate recommendations
-            loan_recommendation = self._generate_loan_recommendation(credit_score, pod)
-            
             # Create prediction result
             prediction_result = PredictionResult(
                 final_credit_score=credit_score,
+                default=default,
                 probability_of_default=pod,
-                loan_recommendation=loan_recommendation,
+                loan_recommendation=[],  # Will be populated separately
                 status="Success"
             )
             
@@ -338,63 +384,154 @@ class LoanApplicationService:
             logger.error(f"Error during prediction: {e}")
             raise RuntimeError(f"Prediction failed: {str(e)}")
 
-    def _generate_loan_recommendation(self, credit_score: int, pod: float) -> List[str]:
+    def _calculate_max_loan_principal(self, max_amortization: float, monthly_interest_rate: float, term_in_months: int) -> float:
         """
-        Generate loan recommendations based on credit score and probability of default.
+        Calculate the maximum loan principal based on amortization capacity.
         
         Args:
-            credit_score: Calculated credit score
-            pod: Probability of default
+            max_amortization: Maximum affordable monthly amortization
+            monthly_interest_rate: Monthly interest rate (as percentage)
+            term_in_months: Loan term in months
             
         Returns:
-            List[str]: List of recommendation strings
+            float: Maximum loan principal
         """
-        recommendations = []
+        rate = monthly_interest_rate / 100
         
-        try:
-            # Credit score based recommendations
-            if credit_score >= 750:
-                recommendations.extend([
-                    "Excellent credit profile",
-                    "Eligible for premium loan products",
-                    "Low interest rates available",
-                    "High loan amount approval likely"
-                ])
-            elif credit_score >= 650:
-                recommendations.extend([
-                    "Good credit profile",
-                    "Standard loan products available",
-                    "Moderate interest rates",
-                    "Standard loan amount approval"
-                ])
-            elif credit_score >= 550:
-                recommendations.extend([
-                    "Fair credit profile",
-                    "Limited loan products available",
-                    "Higher interest rates may apply",
-                    "Lower loan amount or co-signer may be required"
-                ])
-            else:
-                recommendations.extend([
-                    "Poor credit profile",
-                    "High risk applicant",
-                    "Loan approval unlikely",
-                    "Consider improving credit history before reapplying"
-                ])
+        # Handle edge case where rate is 0
+        if rate == 0:
+            return max_amortization * term_in_months
+        
+        # Using the present value of annuity formula
+        # PV = PMT * [(1 - (1 + r)^(-n)) / r]
+        discount_factor = (1 - (1 + rate) ** (-term_in_months)) / rate
+        principal = max_amortization * discount_factor
+        
+        return principal
+    
+    def get_loan_recommendations(
+        self,
+        applicant_info: ApplicantInfoSchema,
+        model_input_data: Dict[str, Any]
+    ) -> List[RecommendedProducts]:
+        """
+        Get loan product recommendations based on applicant information and model data.
+        
+        Args:
+            applicant_info: Applicant information schema
+            model_input_data: Model input data dictionary
             
-            # POD-specific recommendations
-            if pod > 0.5:
-                recommendations.append("High default risk - additional documentation required")
-            elif pod > 0.3:
-                recommendations.append("Moderate default risk - standard verification required")
-            else:
-                recommendations.append("Low default risk - expedited processing possible")
-                
-        except Exception as e:
-            logger.error(f"Error generating recommendations: {e}")
-            recommendations = ["Unable to generate specific recommendations"]
+        Returns:
+            List[RecommendedProducts]: List of recommended loan products
+        """
+        eligible_products = []
+        is_renewing = model_input_data.get("Is_Renewing_Client") == 1
         
-        return recommendations
+        # Get employment sector from model data
+        employment_sector = model_input_data.get("Employment_Sector", "")
+        
+        for product in LOAN_PRODUCTS_CATALOG:
+            rules = product["eligibility_rules"]
+
+            # Rule: Check if the product is for new or existing clients
+            if not rules["is_new_client_eligible"] and not is_renewing:
+                continue
+
+            # Rule: Check employment sector
+            if employment_sector not in rules["employment_sector"]:
+                continue
+
+            # Rule: Check specific job (if applicable)
+            if rules["job"] and hasattr(applicant_info, 'job') and applicant_info.job not in rules["job"]:
+                continue
+
+            eligible_products.append(product)
+
+        if not eligible_products:
+            logger.warning("No eligible products found for applicant")
+            return []
+
+        ranked_products = []
+        net_salary_per_cutoff = model_input_data.get("Net_Salary_Per_Cutoff", 0)
+
+        # Calculate maximum affordable amortization (50% of net salary)
+        max_affordable_amortization = net_salary_per_cutoff * 0.50
+
+        for product in eligible_products:
+            # Calculate the max loan this person can get for this product
+            salary_frequency = model_input_data.get("Salary_Frequency", "Bimonthly")
+            
+            # Convert per-cutoff amortization to monthly
+            if salary_frequency in ["Biweekly", "Bimonthly"]:
+                cutoffs_per_month = 2
+            else:
+                cutoffs_per_month = 1
+
+            max_affordable_monthly_amortization = max_affordable_amortization * cutoffs_per_month
+
+            max_principal = self._calculate_max_loan_principal(
+                max_amortization=max_affordable_monthly_amortization,
+                monthly_interest_rate=product["interest_rate_monthly"],
+                term_in_months=product["max_term_months"]
+            )
+
+            # The final loanable amount cannot exceed the product's own maximum
+            final_loanable_amount = min(max_principal, product["max_loanable_amount"])
+
+            # Ensure non-negative amount
+            final_loanable_amount = max(0, final_loanable_amount)
+
+            # --- Suitability Scoring ---
+            score = 100
+            
+            # Lower interest rate increases score
+            score -= product["interest_rate_monthly"] * 10
+            
+            # Higher potential loan amount increases score
+            score += (final_loanable_amount / 10000)
+            
+            # Longer term increases score (more flexibility)
+            score += product["max_term_months"] / 12
+
+            # Major bonus for specialized loans that match the job
+            if (product["eligibility_rules"]["job"] and 
+                hasattr(applicant_info, 'job') and 
+                applicant_info.job in product["eligibility_rules"]["job"]):
+                score += 20
+
+            # Bonus for existing client products if applicable
+            if not product["eligibility_rules"]["is_new_client_eligible"] and is_renewing:
+                score += 10
+
+            ranked_products.append({
+                "product_data": product,
+                "suitability_score": max(0, int(score)),  # Ensure non-negative score
+                "final_loanable_amount": round(final_loanable_amount, -2),  # Round to nearest 100
+                "estimated_amortization_per_cutoff": round(max_affordable_amortization, 2),
+            })
+
+        # Sort by score, highest first
+        sorted_products = sorted(ranked_products, key=lambda x: x["suitability_score"], reverse=True)
+        
+        recommendation = []
+        for i, item in enumerate(sorted_products):
+            prod_data = item["product_data"]
+            
+            # Only include products with meaningful loan amounts
+            if item["final_loanable_amount"] > 0:
+                recommendation.append(
+                    RecommendedProducts(
+                        product_name=prod_data["product_name"],
+                        is_top_recommendation=(i == 0),
+                        max_loanable_amount=item["final_loanable_amount"],
+                        interest_rate_monthly=prod_data["interest_rate_monthly"],
+                        term_in_months=prod_data["max_term_months"],
+                        estimated_amortization_per_cutoff=item["estimated_amortization_per_cutoff"],
+                        suitability_score=item["suitability_score"]
+                    )
+                )
+        
+        return recommendation
 
 
 def initialize_loan_application_service() -> Optional[LoanApplicationService]:
@@ -411,6 +548,9 @@ def initialize_loan_application_service() -> Optional[LoanApplicationService]:
         if not prediction_service:
             logger.error("Prediction service is not available for loan service initialization")
             return None
+        
+        if not ai_service:
+            logger.warning("AIExplainabilityService is not available for loan service initialization")
         
         service = LoanApplicationService(prediction_service)
         logger.info("LoanApplicationService initialized successfully")

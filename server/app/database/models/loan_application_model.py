@@ -11,14 +11,23 @@ from app.schemas.loan_schema import (
     ComakerRelationshipEnum,
     YesNoEnum,
     OtherIncomeSourceEnum,
-    DisasterPreparednessEnum
+    DisasterPreparednessEnum,
+    JobEnum
 )
+
+class AIExplanation(BaseModel):
+    technical_explanation: str = Field(..., description="Technical explanation of the AI model's prediction")
+    business_explanation: str = Field(..., description="Business explanation of the AI model's prediction")
+    customer_explanation: str = Field(..., description="Customer-friendly explanation of the AI model's prediction")
+    risk_factors: str = Field(..., description="List of risk factors identified by the AI model")
+    recommendations: str = Field(..., description="Recommendations based on the AI model's prediction")
 
 class ApplicantInfo(BaseModel):
     full_name: str = Field(..., description="Full name of the applicant")
     contact_number: str = Field(..., description="Contact number of the applicant")  # Changed from phone_number
     address: str = Field(..., description="Address of the applicant")
     salary: str = Field(..., description="Salary of the applicant")  # Changed from float to str
+    job: JobEnum = Field(..., description="Job of the applicant")
 
 class CoMakerInfo(BaseModel):
     full_name: str = Field(..., description="Full name of the co-maker")
@@ -26,6 +35,7 @@ class CoMakerInfo(BaseModel):
 
 class PredictionResult(BaseModel):
     final_credit_score: int = Field(..., description="Final credit score of the applicant")
+    default: int = Field(ge=0, le=1, description="Default status of the applicant (0 for no, 1 for yes)")
     probability_of_default: float = Field(..., description="Probability of default for the applicant")
     loan_recommendation: List[str] = Field(default=[], description="Loan recommendation based on the credit score and probability of default")
     status: str = Field(default="Pending", description="Status of the prediction result")
@@ -62,6 +72,8 @@ class LoanApplication(Document):
     model_input_data: ModelInputData = Field(..., description="Input data for the model prediction")
 
     prediction_result: Optional[PredictionResult] = Field(None, description="Result of the model prediction")
+    
+    ai_explanation: Optional[AIExplanation] = Field(None, description="Explanation of the AI model's prediction")
 
     class Settings:
         name = "loan_applications"

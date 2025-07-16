@@ -1,13 +1,27 @@
 from pydantic import BaseModel, Field
 from enum import Enum
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+
+class AIExplanation(BaseModel):
+    technical_explanation: str = Field(..., description="Technical explanation of the AI model's prediction")
+    business_explanation: str = Field(..., description="Business explanation of the AI model's prediction")
+    customer_explanation: str = Field(..., description="Customer-friendly explanation of the AI model's prediction")
+    risk_factors: str = Field(..., description="List of risk factors identified by the AI model")
+    recommendations: str = Field(..., description="Recommendations based on the AI model's prediction")
 
 class EmploymentSectorEnum(str, Enum):
     public = "Public"
     private = "Private"
 
+class JobEnum(str, Enum):
+    teacher = "Teacher"
+    security_guard = "Security Guard"
+    seaman = "Seaman"
+    others = "Others"
+
 class SalaryFrequencyEnum(str, Enum):
     monthly = "Monthly"
+    bimonthly = "Bimonthly"
     biweekly = "Biweekly"
     weekly = "Weekly"
 
@@ -66,6 +80,7 @@ class ApplicantInfo(BaseModel):
     contact_number: str
     address: str
     salary: str
+    job: str
 
 class CoMakerInfo(BaseModel):
     """Schema for the co-maker's personal info."""
@@ -81,6 +96,7 @@ class FullLoanApplicationRequest(BaseModel):
 class PredictionResult(BaseModel):
     """Schema for the prediction result."""
     final_credit_score: int
+    default: int = Field(ge=0, le=1, description="Default status of the applicant (0 for no, 1 for yes)")
     probability_of_default: float
     loan_recommendation: List[str]
     status: str = Field(default="Pending", description="Status of the prediction result")
@@ -94,3 +110,30 @@ class PredictionResult(BaseModel):
                 "status": "Pending"
             }
         }
+
+class RecommendedProducts(BaseModel):
+    product_name: str
+    is_top_recommendation: bool
+    max_loanable_amount: float
+    interest_rate_monthly: float
+    term_in_months: int
+    estimated_amortization_per_cutoff: float
+    suitability_score: int
+
+class FullLoanApplicationResponse(BaseModel):
+    """
+    The complete response body after creating a new loan application.
+    """
+    message: str
+    application_id: str
+    timestamp: str
+    status: str
+    prediction_result: PredictionResult
+    applicant_info: ApplicantInfo
+    loan_officer_id: str
+    ai_explanation: Optional[AIExplanation] = None
+
+    recommended_products: List[RecommendedProducts] = []
+
+    class Config:
+        orm_mode = True

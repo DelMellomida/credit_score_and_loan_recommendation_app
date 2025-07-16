@@ -1,10 +1,11 @@
 from fastapi import APIRouter, HTTPException, status, Depends
-from app.services.loan_service import LoanApplicationService, loan_application_service
-from app.schemas.loan_schema import FullLoanApplicationRequest
-from app.database.models.loan_application_model import LoanApplication, ApplicantInfo, CoMakerInfo, ModelInputData
 from typing import Dict, Any, List
 import logging
 from uuid import UUID
+
+from app.services.loan_service import LoanApplicationService, loan_application_service
+from app.schemas.loan_schema import FullLoanApplicationRequest, AIExplanation, FullLoanApplicationResponse
+from app.database.models.loan_application_model import LoanApplication, ApplicantInfo, CoMakerInfo, ModelInputData
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -47,12 +48,7 @@ async def create_loan_application(
         
         # Convert request schemas to database model schemas
         try:
-            applicant_info = ApplicantInfo(
-                full_name=request_data.applicant_info.full_name,
-                contact_number=request_data.applicant_info.contact_number,
-                address=request_data.applicant_info.address,
-                salary=request_data.applicant_info.salary
-            )
+            applicant_info = ApplicantInfo(**request_data.applicant_info.model_dump())
             logger.info("ApplicantInfo created successfully")
         except Exception as e:
             logger.error(f"Error creating ApplicantInfo: {e}")
@@ -69,27 +65,7 @@ async def create_loan_application(
             raise ValueError(f"Error in comaker info: {e}")
         
         try:
-            model_input_data = ModelInputData(
-                Employment_Sector=request_data.model_input_data.Employment_Sector,
-                Employment_Tenure_Months=request_data.model_input_data.Employment_Tenure_Months,
-                Net_Salary_Per_Cutoff=request_data.model_input_data.Net_Salary_Per_Cutoff,
-                Salary_Frequency=request_data.model_input_data.Salary_Frequency,
-                Housing_Status=request_data.model_input_data.Housing_Status,
-                Years_at_Current_Address=request_data.model_input_data.Years_at_Current_Address,
-                Household_Head=request_data.model_input_data.Household_Head,
-                Number_of_Dependents=request_data.model_input_data.Number_of_Dependents,
-                Comaker_Relationship=request_data.model_input_data.Comaker_Relationship,
-                Comaker_Employment_Tenure_Months=request_data.model_input_data.Comaker_Employment_Tenure_Months,
-                Comaker_Net_Salary_Per_Cutoff=request_data.model_input_data.Comaker_Net_Salary_Per_Cutoff,
-                Has_Community_Role=request_data.model_input_data.Has_Community_Role,
-                Paluwagan_Participation=request_data.model_input_data.Paluwagan_Participation,
-                Other_Income_Source=request_data.model_input_data.Other_Income_Source,
-                Disaster_Preparedness=request_data.model_input_data.Disaster_Preparedness,
-                Is_Renewing_Client=request_data.model_input_data.Is_Renewing_Client,
-                Grace_Period_Usage_Rate=request_data.model_input_data.Grace_Period_Usage_Rate,
-                Late_Payment_Count=request_data.model_input_data.Late_Payment_Count,
-                Had_Special_Consideration=request_data.model_input_data.Had_Special_Consideration
-            )
+            model_input_data = ModelInputData(**request_data.model_input_data.model_dump())
             logger.info("ModelInputData created successfully")
         except Exception as e:
             logger.error(f"Error creating ModelInputData: {e}")
@@ -121,6 +97,24 @@ async def create_loan_application(
             logger.error(f"Error during prediction: {e}")
             raise RuntimeError(f"Prediction failed: {e}")
         
+        try:
+            recommended_products = service.get_loan_recommendations(
+                applicant_info=request_data.applicant_info,
+                model_input_data=request_data.model_input_data.model_dump()
+            )
+            logger.info("Recommended products are created")
+        except Exception as e:
+            logger.error("Error during recommending products")
+            raise ValueError(f"Recommending products failed: {e}")
+        
+        try:
+            ai_explanation = await service._generate_and_save_explanation(loan_application)
+            logger.info("AI explanation generated and saved successfully")
+        except Exception as e:
+            logger.error(f"Error generating AI explanation: {e}")
+            print(e)
+            raise RuntimeError(f"AI explanation generation failed: {e}")
+        
         # Save to database
         try:
             logger.info("Saving loan application to database")
@@ -139,17 +133,20 @@ async def create_loan_application(
             "status": "created",
             "prediction_result": {
                 "final_credit_score": prediction_result.final_credit_score,
+                "default": prediction_result.default,
                 "probability_of_default": prediction_result.probability_of_default,
-                "loan_recommendation": prediction_result.loan_recommendation,
                 "status": prediction_result.status
             },
+            "recommended_products": recommended_products,
             "applicant_info": {
                 "full_name": loan_application.applicant_info.full_name,
                 "contact_number": loan_application.applicant_info.contact_number,
                 "address": loan_application.applicant_info.address,
-                "salary": loan_application.applicant_info.salary
+                "salary": loan_application.applicant_info.salary,
+                "job": loan_application.applicant_info.job
             },
-            "loan_officer_id": loan_application.loan_officer_id
+            "loan_officer_id": loan_application.loan_officer_id,
+            "ai_explanation": ai_explanation
         }
         
     except ValueError as e:
