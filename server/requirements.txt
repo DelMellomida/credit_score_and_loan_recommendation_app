@@ -86,3 +86,5 @@ phonenumbers==8.13.25
 
 # Performance & Optimization
 orjson==3.9.10
+
+google-genai==1.25.0

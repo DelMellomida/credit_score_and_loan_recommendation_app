@@ -6,27 +6,31 @@ from uuid import UUID
 from datetime import datetime
 
 from app.schemas.loan_schema import FullLoanApplicationRequest, RecommendedProducts, ApplicantInfo as ApplicantInfoSchema
-from app.loan_product import LOAN_PRODUCTS_CATALOG
-
 from app.services.prediction_service import PredictionService, prediction_service
 from app.services.ai_service import AIExplainabilityService, ai_service
+from app.services.loan_recommendation_service import LoanRecommendationService, loan_recommendation_service
 
 logger = logging.getLogger(__name__)
+
 
 class LoanApplicationService:
     """
     Service class for handling loan application operations.
     """
     
-    def __init__(self, prediction_service: PredictionService):
+    def __init__(self, 
+                 prediction_service: PredictionService, 
+                 recommendation_service: Optional[LoanRecommendationService] = None):
         """
-        Initialize the loan application service with a prediction service.
+        Initialize the loan application service with required services.
         
         Args:
             prediction_service: The prediction service instance
+            recommendation_service: The loan recommendation service instance
         """
         self.prediction_service = prediction_service
         self.ai_service = ai_service
+        self.recommendation_service = recommendation_service
         logger.info("LoanApplicationService initialized")
 
     async def create_loan_application(
@@ -56,6 +60,18 @@ class LoanApplicationService:
             
             # Run prediction using the prediction service
             prediction_result = await self._run_prediction(request_data.model_input_data)
+            
+            # Generate loan recommendations if service is available
+            if self.recommendation_service:
+                loan_recommendations = self.recommendation_service.get_loan_recommendations(
+                    applicant_info=request_data.applicant_info,
+                    model_input_data=request_data.model_input_data.model_dump()
+                )
+                prediction_result.loan_recommendation = loan_recommendations
+                logger.info(f"Generated {len(loan_recommendations)} loan recommendations")
+            else:
+                logger.warning("Loan recommendation service not available")
+                prediction_result.loan_recommendation = []
             
             # Create loan application record
             new_application = LoanApplication(
@@ -126,7 +142,7 @@ class LoanApplicationService:
 
     async def get_loan_application(self, application_id: UUID) -> Optional[LoanApplication]:
         """
-        Retrieve a loan application by its ID.
+        Retrieve a loan application by its application_id UUID.
         
         Args:
             application_id: UUID of the loan application
@@ -135,8 +151,10 @@ class LoanApplicationService:
             Optional[LoanApplication]: The loan application if found, None otherwise
         """
         try:
-            logger.info(f"Retrieving loan application with ID: {application_id}")
-            application = await LoanApplication.get(application_id)
+            logger.info(f"Retrieving loan application with application_id: {application_id}")
+            
+            # Use find_one to search by application_id field instead of _id
+            application = await LoanApplication.find_one(LoanApplication.application_id == application_id)
             
             if application:
                 logger.info(f"Loan application {application_id} found")
@@ -148,7 +166,7 @@ class LoanApplicationService:
         except Exception as e:
             logger.error(f"Error retrieving loan application {application_id}: {e}")
             raise RuntimeError(f"Failed to retrieve loan application: {str(e)}")
-
+    
     async def get_loan_applications(
         self, 
         skip: int = 0, 
@@ -203,7 +221,8 @@ class LoanApplicationService:
         try:
             logger.info(f"Updating status for application {application_id} to: {new_status}")
             
-            application = await LoanApplication.get(application_id)
+            # Use find_one to search by application_id field instead of _id
+            application = await LoanApplication.find_one(LoanApplication.application_id == application_id)
             if not application:
                 logger.warning(f"Application {application_id} not found for status update")
                 return None
@@ -222,6 +241,7 @@ class LoanApplicationService:
             logger.error(f"Error updating application status: {e}")
             raise RuntimeError(f"Failed to update application status: {str(e)}")
 
+
     async def delete_loan_application(self, application_id: UUID) -> bool:
         """
         Delete a loan application by its ID.
@@ -235,7 +255,8 @@ class LoanApplicationService:
         try:
             logger.info(f"Deleting loan application with ID: {application_id}")
             
-            application = await LoanApplication.get(application_id)
+            # Use find_one to search by application_id field instead of _id
+            application = await LoanApplication.find_one(LoanApplication.application_id == application_id)
             if not application:
                 logger.warning(f"Application {application_id} not found for deletion")
                 return False
@@ -248,6 +269,49 @@ class LoanApplicationService:
             logger.error(f"Error deleting loan application {application_id}: {e}")
             raise RuntimeError(f"Failed to delete loan application: {str(e)}")
 
+    async def regenerate_loan_recommendations(
+        self, 
+        application_id: UUID
+    ) -> Optional[List[RecommendedProducts]]:
+        """
+        Regenerate loan recommendations for an existing application.
+        
+        Args:
+            application_id: UUID of the loan application
+            
+        Returns:
+            Optional[List[RecommendedProducts]]: Updated recommendations or None if failed
+        """
+        try:
+            logger.info(f"Regenerating loan recommendations for application: {application_id}")
+            
+            if not self.recommendation_service:
+                logger.error("Loan recommendation service not available")
+                return None
+            
+            # Use find_one to search by application_id field instead of _id
+            application = await LoanApplication.find_one(LoanApplication.application_id == application_id)
+            if not application:
+                logger.warning(f"Application {application_id} not found")
+                return None
+            
+            # Generate new recommendations
+            new_recommendations = self.recommendation_service.get_loan_recommendations(
+                applicant_info=application.applicant_info,
+                model_input_data=application.model_input_data.model_dump()
+            )
+            
+            # Update the application
+            application.prediction_result.loan_recommendation = new_recommendations
+            await application.save()
+            
+            logger.info(f"Regenerated {len(new_recommendations)} loan recommendations for application {application_id}")
+            return new_recommendations
+            
+        except Exception as e:
+            logger.error(f"Error regenerating loan recommendations: {e}")
+            return None
+
     async def get_service_status(self) -> Dict[str, Any]:
         """
         Get the current status of the loan application service.
@@ -259,11 +323,15 @@ class LoanApplicationService:
             # Check if prediction service is available
             prediction_service_status = "healthy" if self.prediction_service else "unavailable"
             
+            # Check if recommendation service is available
+            recommendation_service_status = "healthy" if self.recommendation_service else "unavailable"
+            
             # Get basic service info
             status_info = {
                 "service": "loan-application-service",
                 "status": "healthy",
                 "prediction_service_status": prediction_service_status,
+                "recommendation_service_status": recommendation_service_status,
                 "timestamp": datetime.now().isoformat(),
                 "version": "1.0.0"
             }
@@ -276,6 +344,15 @@ class LoanApplicationService:
                 except Exception as e:
                     logger.warning(f"Could not get prediction service status: {e}")
                     status_info["prediction_service_details"] = {"error": str(e)}
+            
+            # Add recommendation service status if available
+            if self.recommendation_service:
+                try:
+                    rec_status = self.recommendation_service.get_service_status()
+                    status_info["recommendation_service_details"] = rec_status
+                except Exception as e:
+                    logger.warning(f"Could not get recommendation service status: {e}")
+                    status_info["recommendation_service_details"] = {"error": str(e)}
             
             return status_info
             
@@ -293,7 +370,6 @@ class LoanApplicationService:
         Raises:
             ValueError: If validation fails
         """
-        # Validate applicant info
         if not request_data.applicant_info.full_name.strip():
             raise ValueError("Applicant full name is required")
         
@@ -303,14 +379,12 @@ class LoanApplicationService:
         if not request_data.applicant_info.address.strip():
             raise ValueError("Applicant address is required")
         
-        # Validate co-maker info
         if not request_data.comaker_info.full_name.strip():
             raise ValueError("Co-maker full name is required")
         
         if not request_data.comaker_info.contact_number.strip():
             raise ValueError("Co-maker contact number is required")
         
-        # Validate model input data
         model_data = request_data.model_input_data
         
         if model_data.Employment_Tenure_Months <= 0:
@@ -373,7 +447,7 @@ class LoanApplicationService:
                 final_credit_score=credit_score,
                 default=default,
                 probability_of_default=pod,
-                loan_recommendation=[],  # Will be populated separately
+                loan_recommendation=[],  # Will be populated later
                 status="Success"
             )
             
@@ -383,155 +457,6 @@ class LoanApplicationService:
         except Exception as e:
             logger.error(f"Error during prediction: {e}")
             raise RuntimeError(f"Prediction failed: {str(e)}")
-
-    def _calculate_max_loan_principal(self, max_amortization: float, monthly_interest_rate: float, term_in_months: int) -> float:
-        """
-        Calculate the maximum loan principal based on amortization capacity.
-        
-        Args:
-            max_amortization: Maximum affordable monthly amortization
-            monthly_interest_rate: Monthly interest rate (as percentage)
-            term_in_months: Loan term in months
-            
-        Returns:
-            float: Maximum loan principal
-        """
-        rate = monthly_interest_rate / 100
-        
-        # Handle edge case where rate is 0
-        if rate == 0:
-            return max_amortization * term_in_months
-        
-        # Using the present value of annuity formula
-        # PV = PMT * [(1 - (1 + r)^(-n)) / r]
-        discount_factor = (1 - (1 + rate) ** (-term_in_months)) / rate
-        principal = max_amortization * discount_factor
-        
-        return principal
-    
-    def get_loan_recommendations(
-        self,
-        applicant_info: ApplicantInfoSchema,
-        model_input_data: Dict[str, Any]
-    ) -> List[RecommendedProducts]:
-        """
-        Get loan product recommendations based on applicant information and model data.
-        
-        Args:
-            applicant_info: Applicant information schema
-            model_input_data: Model input data dictionary
-            
-        Returns:
-            List[RecommendedProducts]: List of recommended loan products
-        """
-        eligible_products = []
-        is_renewing = model_input_data.get("Is_Renewing_Client") == 1
-        
-        # Get employment sector from model data
-        employment_sector = model_input_data.get("Employment_Sector", "")
-        
-        for product in LOAN_PRODUCTS_CATALOG:
-            rules = product["eligibility_rules"]
-
-            # Rule: Check if the product is for new or existing clients
-            if not rules["is_new_client_eligible"] and not is_renewing:
-                continue
-
-            # Rule: Check employment sector
-            if employment_sector not in rules["employment_sector"]:
-                continue
-
-            # Rule: Check specific job (if applicable)
-            if rules["job"] and hasattr(applicant_info, 'job') and applicant_info.job not in rules["job"]:
-                continue
-
-            eligible_products.append(product)
-
-        if not eligible_products:
-            logger.warning("No eligible products found for applicant")
-            return []
-
-        ranked_products = []
-        net_salary_per_cutoff = model_input_data.get("Net_Salary_Per_Cutoff", 0)
-
-        # Calculate maximum affordable amortization (50% of net salary)
-        max_affordable_amortization = net_salary_per_cutoff * 0.50
-
-        for product in eligible_products:
-            # Calculate the max loan this person can get for this product
-            salary_frequency = model_input_data.get("Salary_Frequency", "Bimonthly")
-            
-            # Convert per-cutoff amortization to monthly
-            if salary_frequency in ["Biweekly", "Bimonthly"]:
-                cutoffs_per_month = 2
-            else:
-                cutoffs_per_month = 1
-
-            max_affordable_monthly_amortization = max_affordable_amortization * cutoffs_per_month
-
-            max_principal = self._calculate_max_loan_principal(
-                max_amortization=max_affordable_monthly_amortization,
-                monthly_interest_rate=product["interest_rate_monthly"],
-                term_in_months=product["max_term_months"]
-            )
-
-            # The final loanable amount cannot exceed the product's own maximum
-            final_loanable_amount = min(max_principal, product["max_loanable_amount"])
-
-            # Ensure non-negative amount
-            final_loanable_amount = max(0, final_loanable_amount)
-
-            # --- Suitability Scoring ---
-            score = 100
-            
-            # Lower interest rate increases score
-            score -= product["interest_rate_monthly"] * 10
-            
-            # Higher potential loan amount increases score
-            score += (final_loanable_amount / 10000)
-            
-            # Longer term increases score (more flexibility)
-            score += product["max_term_months"] / 12
-
-            # Major bonus for specialized loans that match the job
-            if (product["eligibility_rules"]["job"] and 
-                hasattr(applicant_info, 'job') and 
-                applicant_info.job in product["eligibility_rules"]["job"]):
-                score += 20
-
-            # Bonus for existing client products if applicable
-            if not product["eligibility_rules"]["is_new_client_eligible"] and is_renewing:
-                score += 10
-
-            ranked_products.append({
-                "product_data": product,
-                "suitability_score": max(0, int(score)),  # Ensure non-negative score
-                "final_loanable_amount": round(final_loanable_amount, -2),  # Round to nearest 100
-                "estimated_amortization_per_cutoff": round(max_affordable_amortization, 2),
-            })
-
-        # Sort by score, highest first
-        sorted_products = sorted(ranked_products, key=lambda x: x["suitability_score"], reverse=True)
-        
-        recommendation = []
-        for i, item in enumerate(sorted_products):
-            prod_data = item["product_data"]
-            
-            # Only include products with meaningful loan amounts
-            if item["final_loanable_amount"] > 0:
-                recommendation.append(
-                    RecommendedProducts(
-                        product_name=prod_data["product_name"],
-                        is_top_recommendation=(i == 0),
-                        max_loanable_amount=item["final_loanable_amount"],
-                        interest_rate_monthly=prod_data["interest_rate_monthly"],
-                        term_in_months=prod_data["max_term_months"],
-                        estimated_amortization_per_cutoff=item["estimated_amortization_per_cutoff"],
-                        suitability_score=item["suitability_score"]
-                    )
-                )
-        
-        return recommendation
 
 
 def initialize_loan_application_service() -> Optional[LoanApplicationService]:
@@ -544,7 +469,6 @@ def initialize_loan_application_service() -> Optional[LoanApplicationService]:
     try:
         logger.info("Initializing LoanApplicationService...")
         
-        # Check if prediction service is available
         if not prediction_service:
             logger.error("Prediction service is not available for loan service initialization")
             return None
@@ -552,7 +476,13 @@ def initialize_loan_application_service() -> Optional[LoanApplicationService]:
         if not ai_service:
             logger.warning("AIExplainabilityService is not available for loan service initialization")
         
-        service = LoanApplicationService(prediction_service)
+        if not loan_recommendation_service:
+            logger.warning("LoanRecommendationService is not available for loan service initialization")
+        
+        service = LoanApplicationService(
+            prediction_service=prediction_service,
+            recommendation_service=loan_recommendation_service
+        )
         logger.info("LoanApplicationService initialized successfully")
         return service
         

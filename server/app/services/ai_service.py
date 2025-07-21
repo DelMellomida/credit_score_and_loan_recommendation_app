@@ -11,11 +11,9 @@ from google.generativeai.types import GenerationConfig
 from app.core import Settings
 from app.schemas.loan_schema import LoanApplicationRequest
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- FIX 1: Configure the API Key Globally at startup ---
 try:
     if not Settings.GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY is not set in the environment or settings.")
@@ -32,7 +30,6 @@ class AIExplainabilityService:
     
     def __init__(self, model_name: str = "gemini-1.5-flash-latest"):
         """Initialize the AI explainability service."""
-        # --- FIX 2: Instantiate GenerativeModel, not the low-level Client ---
         try:
             if not _is_service_configured:
                 raise RuntimeError("AI Service is not configured due to missing API key.")
@@ -77,7 +74,6 @@ class AIExplainabilityService:
                 temperature=0.3
             )
             
-            # --- FIX 3: Call generate_content directly on the self.model object ---
             response = self.model.generate_content(
                 prompt,
                 generation_config=generation_config
@@ -114,7 +110,6 @@ class AIExplainabilityService:
             }
         }
 
-    # All prompt-generation methods remain the same
     def _generate_technical_explanation(self, analysis_data: Dict[str, Any]) -> str:
         return (
             "System Instruction: Technical Explanation\n"
@@ -169,8 +164,6 @@ class AIExplainabilityService:
     def _assess_risk_factors(self, app_data: Dict[str, Any]) -> Dict[str, Any]:
         return {"employment_stability": "High" if app_data.get("Employment_Tenure_Months", 0) > 24 else "Medium"}
 
-
-# Initialize the service
 def initialize_ai_service() -> Optional[AIExplainabilityService]:
     """Initialize the AI explainability service."""
     if not _is_service_configured:
@@ -182,5 +175,4 @@ def initialize_ai_service() -> Optional[AIExplainabilityService]:
         logger.error(f"Failed to initialize AIExplainabilityService instance: {e}", exc_info=True)
         return None
 
-# Global service instance
 ai_service = initialize_ai_service()

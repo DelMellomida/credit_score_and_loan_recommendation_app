@@ -1,4 +1,4 @@
-# app/auth_dependencies.py
+# app/core/auth_dependencies.py
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from app.core.security import decode_token
@@ -6,7 +6,7 @@ from app.services.auth_service import auth_service
 from typing import Dict
 
 # OAuth2 scheme for token extraction
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict:
     """
@@ -38,7 +38,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict:
         if email is None:
             raise credentials_exception
             
-    except Exception:
+    except Exception as e:
+        print(f"DEBUG: Token validation failed: {e}")  # Debug log
         raise credentials_exception
     
     # Get user from database
@@ -93,6 +94,29 @@ async def get_admin_user(current_user: Dict = Depends(get_current_user)) -> Dict
     #     raise HTTPException(
     #         status_code=status.HTTP_403_FORBIDDEN,
     #         detail="Admin access required"
+    #     )
+    
+    return current_user
+
+async def get_loan_officer_user(current_user: Dict = Depends(get_current_user)) -> Dict:
+    """
+    Dependency to get current user with loan officer privileges.
+    Example of role-based access control for loan operations.
+    
+    Args:
+        current_user: User dict from get_current_user dependency
+        
+    Returns:
+        Dict: Loan officer user information
+        
+    Raises:
+        HTTPException: If user is not a loan officer
+    """
+    # Example role check for loan officers
+    # if current_user.get("role") not in ["loan_officer", "admin"]:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail="Loan officer access required"
     #     )
     
     return current_user

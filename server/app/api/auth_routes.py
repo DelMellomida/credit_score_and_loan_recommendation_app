@@ -3,6 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from typing import Dict
 
+from pydantic import EmailStr
+
 from app.services.auth_service import auth_service
 from app.schemas import UserCreate, UserResponse, Token
 from app.core.auth_dependencies import get_current_user
@@ -21,6 +23,35 @@ async def signup_user(user_data: UserCreate) -> UserResponse:
     - **full_name**: User's full name
     - **password**: User password (minimum 8 characters)
     """
+    try:
+        created_user = await auth_service.register_user(user_data)
+        return UserResponse(**created_user)
+    except HTTPException:
+        # Re-raise HTTPExceptions from the service layer
+        raise
+    except Exception as e:
+        # Log the actual error for debugging but don't expose it
+        print(f"Unexpected error during signup: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during registration"
+        )
+
+@router.post("/signup-demo", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def signup_user_demo(
+    email: EmailStr,
+    full_name: str,
+    password: str
+) -> UserResponse:
+    """
+    Register a new user.
+    
+    - **email**: User email (must be unique)
+    - **full_name**: User's full name
+    - **password**: User password (minimum 8 characters)
+    """
+    user_data = UserCreate(email=email, full_name=full_name, password=password)
+
     try:
         created_user = await auth_service.register_user(user_data)
         return UserResponse(**created_user)

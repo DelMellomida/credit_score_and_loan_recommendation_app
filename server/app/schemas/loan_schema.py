@@ -9,6 +9,16 @@ class AIExplanation(BaseModel):
     risk_factors: str = Field(..., description="List of risk factors identified by the AI model")
     recommendations: str = Field(..., description="Recommendations based on the AI model's prediction")
 
+class CulturalComponentScores(BaseModel):
+    cultural_composite: float = Field(..., description="Overall cultural composite score")
+    disaster_preparedness: float = Field(..., description="Disaster preparedness score")
+    other_income: float = Field(..., description="Other income source score")
+    comaker_relationship: float = Field(..., description="Co-maker relationship score")
+    salary_frequency: float = Field(..., description="Salary frequency score")
+    community_role: float = Field(..., description="Community role score")
+    paluwagan: float = Field(..., description="Paluwagan participation score")
+    dependents_impact: float = Field(..., description="Number of dependents impact score")
+
 class EmploymentSectorEnum(str, Enum):
     public = "Public"
     private = "Private"
@@ -53,7 +63,6 @@ class DisasterPreparednessEnum(str, Enum):
 
 class LoanApplicationRequest(BaseModel):
     """Defines all the fields a loan officer must submit for a prediction."""
-    # This is the Pydantic model for the `model_input_data` field in your database model.
     Employment_Sector: EmploymentSectorEnum
     Employment_Tenure_Months: int = Field(..., gt=0)
     Net_Salary_Per_Cutoff: float = Field(..., gt=0)
@@ -93,13 +102,26 @@ class FullLoanApplicationRequest(BaseModel):
     comaker_info: CoMakerInfo
     model_input_data: LoanApplicationRequest
 
+class RecommendedProducts(BaseModel):
+    product_name: str
+    is_top_recommendation: bool
+    max_loanable_amount: float
+    interest_rate_monthly: float
+    term_in_months: int
+    estimated_amortization_per_cutoff: float
+    suitability_score: int
+
 class PredictionResult(BaseModel):
     """Schema for the prediction result."""
     final_credit_score: int
     default: int = Field(ge=0, le=1, description="Default status of the applicant (0 for no, 1 for yes)")
     probability_of_default: float
-    loan_recommendation: List[str]
+    loan_recommendation: List[Dict]
     status: str = Field(default="Pending", description="Status of the prediction result")
+    risk_level: Optional[str] = Field(None, description="Risk level assessment")
+    threshold_used: Optional[float] = Field(None, description="Threshold used for binary classification")
+    cultural_component_scores: Optional[CulturalComponentScores] = Field(None, description="Cultural component scores")
+    detailed_cultural_analysis: Optional[Dict[str, Any]] = Field(None, description="Detailed cultural analysis")
     
     class Config:
         schema_extra = {
@@ -110,15 +132,6 @@ class PredictionResult(BaseModel):
                 "status": "Pending"
             }
         }
-
-class RecommendedProducts(BaseModel):
-    product_name: str
-    is_top_recommendation: bool
-    max_loanable_amount: float
-    interest_rate_monthly: float
-    term_in_months: int
-    estimated_amortization_per_cutoff: float
-    suitability_score: int
 
 class FullLoanApplicationResponse(BaseModel):
     """
