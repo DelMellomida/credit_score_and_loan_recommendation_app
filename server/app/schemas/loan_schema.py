@@ -61,6 +61,18 @@ class DisasterPreparednessEnum(str, Enum):
     insurance = "Insurance"
     community_plan = "Community Plan"
 
+class PaluwaganParticipationEnum(str, Enum):
+    never = "Never"
+    rarely = "Rarely"
+    sometimes = "Sometimes"
+    frequently = "Frequently"
+
+class CommunityRoleEnum(str, Enum):
+    none = "None"
+    member = "Member"
+    leader = "Leader"
+    multiple_leader = "Multiple Leader"
+
 class LoanApplicationRequest(BaseModel):
     """Defines all the fields a loan officer must submit for a prediction."""
     Employment_Sector: EmploymentSectorEnum
@@ -74,8 +86,8 @@ class LoanApplicationRequest(BaseModel):
     Comaker_Relationship: ComakerRelationshipEnum
     Comaker_Employment_Tenure_Months: int = Field(..., gt=0)
     Comaker_Net_Salary_Per_Cutoff: float = Field(..., gt=0)
-    Has_Community_Role: YesNoEnum
-    Paluwagan_Participation: YesNoEnum
+    Has_Community_Role: CommunityRoleEnum
+    Paluwagan_Participation: PaluwaganParticipationEnum
     Other_Income_Source: OtherIncomeSourceEnum
     Disaster_Preparedness: DisasterPreparednessEnum
     Is_Renewing_Client: int = Field(0, ge=0, le=1)

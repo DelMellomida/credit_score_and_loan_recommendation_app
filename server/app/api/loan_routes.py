@@ -18,7 +18,9 @@ from app.schemas.loan_schema import (
     ComakerRelationshipEnum, 
     OtherIncomeSourceEnum, 
     DisasterPreparednessEnum,
-    RecommendedProducts
+    RecommendedProducts,
+    PaluwaganParticipationEnum,
+    CommunityRoleEnum
 )
 from app.database.models.loan_application_model import (
     LoanApplication, 
@@ -229,8 +231,8 @@ async def create_demo_loan_application(
     comaker_relationship: ComakerRelationshipEnum,
     comaker_employment_tenure_months: int,
     comaker_net_salary_per_cutoff: float,
-    has_community_role: YesNoEnum,
-    paluwagan_participation: YesNoEnum,
+    has_community_role: CommunityRoleEnum,
+    paluwagan_participation: PaluwaganParticipationEnum,
     other_income_source: OtherIncomeSourceEnum,
     disaster_preparedness: DisasterPreparednessEnum,
     is_renewing_client: int = 0,

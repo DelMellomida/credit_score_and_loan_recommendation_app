@@ -12,7 +12,9 @@ from app.schemas.loan_schema import (
     YesNoEnum,
     OtherIncomeSourceEnum,
     DisasterPreparednessEnum,
-    JobEnum
+    JobEnum,
+    CommunityRoleEnum,
+    PaluwaganParticipationEnum
 )
 
 class AIExplanation(BaseModel):
@@ -66,8 +68,8 @@ class ModelInputData(BaseModel):
     Comaker_Relationship: ComakerRelationshipEnum = Field(..., description="Relationship of the co-maker to the applicant")
     Comaker_Employment_Tenure_Months: int = Field(..., description="Employment tenure of the co-maker in months")
     Comaker_Net_Salary_Per_Cutoff: float = Field(..., description="Net salary of the co-maker per cutoff")
-    Has_Community_Role: YesNoEnum = Field(..., description="Indicates if the applicant has a community role")
-    Paluwagan_Participation: YesNoEnum = Field(..., description="Indicates if the applicant participates in a Paluwagan")
+    Has_Community_Role: CommunityRoleEnum = Field(..., description="Indicates if the applicant has a community role")
+    Paluwagan_Participation: PaluwaganParticipationEnum = Field(..., description="Indicates if the applicant participates in a Paluwagan")
     Other_Income_Source: OtherIncomeSourceEnum = Field(..., description="Other income source of the applicant")
     Disaster_Preparedness: DisasterPreparednessEnum = Field(..., description="Disaster preparedness of the applicant")
     Is_Renewing_Client: int = Field(..., description="Indicates if the applicant is a renewing client")

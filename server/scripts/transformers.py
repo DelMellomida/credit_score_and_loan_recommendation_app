@@ -170,11 +170,11 @@ class EnhancedCreditScoringConfig:
         """
         return {
             'has_community_role': {
-                'Yes': 0.05,    # SEVERELY LIMITED from perfect predictor
+                'Yes': 0.1,    # SEVERELY LIMITED from perfect predictor
                 'No': 0.0       # Baseline
             },
             'paluwagan_participation': {
-                'Yes': 0.05,    # SEVERELY LIMITED from 66% advantage
+                'Yes': 0.1,    # SEVERELY LIMITED from 66% advantage
                 'No': 0.0       # Baseline
             },
             'housing_status': {
@@ -190,15 +190,15 @@ class EnhancedCreditScoringConfig:
                 'Private': 0.08
             },
             'disaster_preparedness': {
-                'Community Plan': 0.15,
-                'Insurance': 0.12,
-                'Savings': 0.08,
+                'Community Plan': 0.1,
+                'Insurance': 0.07,
+                'Savings': 0.05,
                 'None': 0.0
             },
             'other_income_source': {
-                'OFW Remittance': 0.20,
-                'Business': 0.15,
-                'Freelance': 0.08,
+                'OFW Remittance': 0.1,
+                'Business': 0.07,
+                'Freelance': 0.05,
                 'None': 0.0
             },
             'comaker_relationship': {

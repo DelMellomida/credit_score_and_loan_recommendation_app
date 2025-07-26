@@ -1,4 +1,5 @@
 import joblib
+import pickle
 import os
 import pandas as pd
 import numpy as np
@@ -7,477 +8,359 @@ from typing import Dict, Any, Optional, List
 import logging
 from app.schemas.loan_schema import LoanApplicationRequest
 
-# Import enhanced transformers from local transformers module
-from scripts.transformers import (
-    EnhancedCreditScoringTransformer,
-    EnhancedCreditScoringConfig,
-    validate_loan_application_schema,
-    get_available_features,
-    create_loan_application_from_dict,
-    ClientType
-)
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# File paths with fallback options
 MODEL_DIR = './models'
-FALLBACK_MODEL_DIR = '../models'
+# Try to load the fairness-aware model first, fallback to standard model
+FAIR_MODEL_PATH = os.path.join(MODEL_DIR, 'new_client_model_fair.pkl')
+STANDARD_MODEL_PATH = os.path.join(MODEL_DIR, 'new_client_model.pkl')
 
-def get_model_path(filename):
-    """Get model path with fallback directory checking."""
-    primary_path = os.path.join(MODEL_DIR, filename)
-    fallback_path = os.path.join(FALLBACK_MODEL_DIR, filename)
-    
-    if os.path.exists(primary_path):
-        return primary_path
-    elif os.path.exists(fallback_path):
-        return fallback_path
-    else:
-        return primary_path
-
-# Model paths - using the original naming scheme
-MODEL_PATH = get_model_path('enhanced_credit_model.pkl')
-ENCODER_PATH = get_model_path('encoder.pkl')
-SCALER_PATH = get_model_path('feature_scaler.pkl')
-POLY_PATH = get_model_path('polynomial_features.pkl')
-SELECTOR_PATH = get_model_path('feature_selector.pkl')
-FEATURES_INFO_PATH = get_model_path('feature_info.pkl')
-HYBRID_MODEL_INFO_PATH = get_model_path('model_info.pkl')
-TRANSFORMER_INSTANCES_PATH = get_model_path('transformers.pkl')  # Changed from transformer_instances.pkl
-
-# Additional enhanced model paths (for when new models are available)
-ENHANCED_MODEL_INFO_PATH = get_model_path('model_info.pkl')
-
+# Define the FairnessAwareModel class locally to handle unpickling
+class FairnessAwareModel:
+    """
+    Local definition of FairnessAwareModel to handle unpickling issues.
+    This class wraps a base model with fairness postprocessors.
+    """
+    def __init__(self, base_model, fairness_postprocessors):
+        self.base_model = base_model
+        self.fairness_postprocessors = fairness_postprocessors
+        
+    def predict(self, X, apply_fairness=True, sensitive_feature_name=None):
+        if not apply_fairness or not sensitive_feature_name:
+            return self.base_model.predict(X)
+        
+        if sensitive_feature_name in self.fairness_postprocessors:
+            postprocessor = self.fairness_postprocessors[sensitive_feature_name]
+            return postprocessor.predict(
+                X, 
+                sensitive_features=X[sensitive_feature_name]
+            )
+        else:
+            return self.base_model.predict(X)
+            
+    def predict_proba(self, X):
+        return self.base_model.predict_proba(X)
 
 class PredictionService:
-    """
-    Enhanced Prediction Service with feature isolation and data leakage prevention.
-    
-    Maintains original interface while providing enhanced capabilities:
-    - Client-type specific scoring
-    - Mathematical feature isolation
-    - Data leakage prevention
-    - Backwards compatibility
-    """
-    
-    def __init__(self, default_threshold: float = 0.5):
+    def __init__(self, default_threshold: float = 0.5, default_sensitive_feature: Optional[str] = None):
         self.model = None
-        self.encoder = None
-        self.scaler = None
-        self.poly = None
-        self.selector = None
-        self.features_info = None
-        self.hybrid_model_info = None
-        self.enhanced_transformer = None
-        self.config = None
+        self.is_fairness_aware = False
         self.default_threshold = default_threshold
-        self._load_models()
+        self.default_sensitive_feature = default_sensitive_feature
+        self.available_sensitive_features = []
+        self._load_model()
 
-    def _load_models(self):
-        """Load all required model components with enhanced transformers."""
+    def _load_model(self):
+        """Load the trained model pipeline with support for fairness-aware models."""
         try:
-            logger.info("Loading models with enhanced transformers...")
+            logger.info("Loading model...")
             
-            if not os.path.exists(MODEL_DIR) and not os.path.exists(FALLBACK_MODEL_DIR):
-                raise FileNotFoundError(f"Model directories '{MODEL_DIR}' and '{FALLBACK_MODEL_DIR}' do not exist.")
+            # Check if model directory exists
+            if not os.path.exists(MODEL_DIR):
+                raise FileNotFoundError(f"Model directory '{MODEL_DIR}' does not exist.")
             
-            # Load main ML components
-            self.model = joblib.load(MODEL_PATH)
-            self.scaler = joblib.load(SCALER_PATH)
-            self.poly = joblib.load(POLY_PATH)
-            self.selector = joblib.load(SELECTOR_PATH)
-            
-            # Load encoder (should be None for new model)
-            try:
-                encoder_data = joblib.load(ENCODER_PATH)
-                if isinstance(encoder_data, dict) and encoder_data.get('type') == 'none':
-                    self.encoder = None
-                else:
-                    self.encoder = encoder_data
-            except Exception as e:
-                logger.warning(f"Could not load encoder: {e}")
-                self.encoder = None
-            
-            # Load features info
-            try:
-                if os.path.exists(FEATURES_INFO_PATH):
-                    self.features_info = joblib.load(FEATURES_INFO_PATH)
-                else:
-                    # Fallback to enhanced feature structure
-                    self.features_info = get_available_features()
-            except Exception as e:
-                logger.warning(f"Could not load features info: {e}")
-                self.features_info = get_available_features()
-            
-            # Load hybrid model info
-            try:
-                if os.path.exists(HYBRID_MODEL_INFO_PATH):
-                    self.hybrid_model_info = joblib.load(HYBRID_MODEL_INFO_PATH)
-                elif os.path.exists(ENHANCED_MODEL_INFO_PATH):
-                    self.hybrid_model_info = joblib.load(ENHANCED_MODEL_INFO_PATH)
-                else:
-                    self.hybrid_model_info = {
-                        'model_type': 'enhanced_feature_isolation',
-                        'feature_isolation_enabled': True,
-                        'version': '2.0.0'
-                    }
-            except Exception as e:
-                logger.warning(f"Could not load model info: {e}")
-                self.hybrid_model_info = {
-                    'model_type': 'enhanced_feature_isolation',
-                    'feature_isolation_enabled': True,
-                    'version': '2.0.0'
-                }
-            
-            # Load enhanced transformer instances
-            try:
-                if os.path.exists(TRANSFORMER_INSTANCES_PATH):
-                    transformer_info = joblib.load(TRANSFORMER_INSTANCES_PATH)
-                    if isinstance(transformer_info, dict):
-                        self.enhanced_transformer = transformer_info.get('enhanced_transformer')
-                        self.config = transformer_info.get('config')
+            # Try to load fairness-aware model first
+            model_loaded = False
+            if os.path.exists(FAIR_MODEL_PATH):
+                try:
+                    logger.info("Attempting to load fairness-aware model...")
+                    
+                    # First, try to load with custom unpickler
+                    try:
+                        with open(FAIR_MODEL_PATH, 'rb') as f:
+                            # Create a custom unpickler that can handle the FairnessAwareModel class
+                            import pickle
+                            import sys
+                            
+                            # Temporarily add the FairnessAwareModel to __main__ for unpickling
+                            import __main__
+                            __main__.FairnessAwareModel = FairnessAwareModel
+                            
+                            self.model = pickle.load(f)
+                    except Exception as e:
+                        logger.warning(f"Failed to load with custom unpickler: {e}")
+                        # Try alternative loading methods
+                        raise e
+                    
+                    # Check if it's a fairness-aware model
+                    if hasattr(self.model, 'fairness_postprocessors'):
+                        self.is_fairness_aware = True
+                        self.available_sensitive_features = list(self.model.fairness_postprocessors.keys())
+                        logger.info(f"Fairness-aware model loaded successfully. Available sensitive features: {self.available_sensitive_features}")
+                        model_loaded = True
                     else:
-                        # Handle case where transformer is saved directly
-                        self.enhanced_transformer = transformer_info
-                        self.config = EnhancedCreditScoringConfig()
-                    logger.info("Loaded saved enhanced transformer instances")
-                else:
-                    raise FileNotFoundError("Transformer instances not found")
-            except Exception as e:
-                logger.warning(f"Could not load saved transformer instances: {e}")
-                # Initialize fresh enhanced transformers
-                self.config = EnhancedCreditScoringConfig()
-                self.enhanced_transformer = EnhancedCreditScoringTransformer(self.config)
-                logger.info("Initialized fresh enhanced transformer")
+                        logger.info("Model at fair path is not fairness-aware, treating as standard model.")
+                        model_loaded = True
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to load fairness-aware model: {e}")
+                    logger.info("Will attempt to reconstruct from components...")
+                    
+                    # Try to load and reconstruct fairness-aware model from components
+                    try:
+                        self._attempt_fairness_model_reconstruction()
+                        if self.model is not None:
+                            model_loaded = True
+                    except Exception as reconstruction_error:
+                        logger.warning(f"Failed to reconstruct fairness model: {reconstruction_error}")
             
-            # Validate transformer
-            if not isinstance(self.enhanced_transformer, EnhancedCreditScoringTransformer):
-                logger.warning("Transformer is not enhanced type, creating new one")
-                self.config = EnhancedCreditScoringConfig()
-                self.enhanced_transformer = EnhancedCreditScoringTransformer(self.config)
+            # Fallback to standard model if fairness-aware model not loaded
+            if not model_loaded and os.path.exists(STANDARD_MODEL_PATH):
+                try:
+                    logger.info("Loading standard model...")
+                    with open(STANDARD_MODEL_PATH, 'rb') as f:
+                        self.model = pickle.load(f)
+                    model_loaded = True
+                    logger.info("Standard model loaded successfully.")
+                except Exception as e:
+                    raise RuntimeError(f"Failed to load standard model: {e}")
             
-            logger.info("All model components loaded successfully with enhanced transformers.")
+            if not model_loaded:
+                raise FileNotFoundError("No model file found (neither fair nor standard).")
             
+            # Validate model structure
+            if self.is_fairness_aware:
+                # For fairness-aware model, check the base_model
+                if not hasattr(self.model, 'base_model'):
+                    raise ValueError("Fairness-aware model missing base_model attribute.")
+                if not hasattr(self.model.base_model, 'predict') or not hasattr(self.model.base_model, 'predict_proba'):
+                    raise ValueError("Base model does not have required predict methods.")
+            else:
+                # For standard model
+                if not hasattr(self.model, 'predict') or not hasattr(self.model, 'predict_proba'):
+                    raise ValueError("Model does not have required predict methods.")
+            
+            logger.info("Model validation successful.")
+            
+        except FileNotFoundError as e:
+            logger.error(f"File not found error: {e}")
+            raise RuntimeError(f"Model file not found: {e}")
         except Exception as e:
-            logger.error(f"Failed to load models: {e}")
-            raise RuntimeError(f"Model loading failed: {e}")
+            logger.error(f"Unexpected error loading model: {e}")
+            raise RuntimeError(f"Failed to load model: {e}")
 
-    def predict(self, input_data: LoanApplicationRequest) -> Dict[str, Any]:
-        """Make a prediction using enhanced feature isolation system."""
+    def _attempt_fairness_model_reconstruction(self):
+        """
+        Attempt to reconstruct fairness model from separate components if available.
+        This is a fallback method when direct pickle loading fails.
+        """
         try:
-            if not self._is_service_ready():
-                raise RuntimeError("PredictionService is not properly initialized.")
+            # Check if there are separate component files
+            base_model_path = os.path.join(MODEL_DIR, 'base_model.pkl')
+            fairness_components_path = os.path.join(MODEL_DIR, 'fairness_components.pkl')
             
-            # Convert to DataFrame
-            df = pd.DataFrame([input_data.model_dump()])
-            
-            # Validate and fix schema issues
-            df_fixed, validation_issues = validate_loan_application_schema(df)
-            if validation_issues:
-                logger.warning(f"Schema issues found and fixed: {validation_issues}")
-                df = df_fixed
-            
-            # Apply enhanced transformations
-            df_transformed = self.enhanced_transformer.transform(df)
-            
-            # Determine client type for conditional logic
-            is_renewing = bool(df['Is_Renewing_Client'].iloc[0]) if 'Is_Renewing_Client' in df.columns else False
-            client_type = "renewing" if is_renewing else "new"
-            
-            # Get features that match training (excluding problematic features)
-            available_features = self._get_prediction_features(df_transformed)
-            
-            logger.info(f"Using {len(available_features)} features for {client_type} client prediction")
-            logger.info(f"Features: {available_features}")
-            
-            # Prepare feature matrix - should be all numeric from training fix
-            X = df_transformed[available_features].fillna(0)
-            
-            # Verify all features are numeric (should be after training fix)
-            for col in X.columns:
-                if X[col].dtype == 'object':
-                    logger.warning(f"Converting {col} to numeric")
-                    X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
-            
-            # Apply preprocessing pipeline (same as training)
-            X_scaled = self.scaler.transform(X)
-            X_poly = self.poly.transform(X_scaled)
-            X_selected = self.selector.transform(X_poly)
-            
-            # Make prediction
-            prediction_proba = self.model.predict_proba(X_selected)
-            probability_of_default = float(prediction_proba[0, 1])
-            binary_prediction = int(probability_of_default >= self.default_threshold)
-            
-            # Get enhanced component scores with feature isolation details
-            component_scores = self._extract_component_scores(df_transformed, client_type)
-            
-            # Get feature isolation summary
-            isolation_summary = self._get_feature_isolation_summary(client_type)
-            
-            return {
-                "probability_of_default": probability_of_default,
-                "default_prediction": binary_prediction,
-                "threshold_used": self.default_threshold,
-                "component_scores": component_scores,
-                "client_type": client_type,
-                "feature_isolation_applied": True,
-                "model_type": "enhanced_feature_isolation",
-                "feature_isolation_summary": isolation_summary,
-                "bias_reduction_active": True,
-                "mathematical_constraints_active": True,
-                "features_used": available_features,
-                "features_count": len(available_features)
-            }
-            
-        except Exception as e:
-            logger.error(f"Prediction failed: {e}")
-            logger.error(f"Error details: {str(e)}")
-            
-            # Add helpful debugging info
-            if "feature_names" in str(e).lower():
-                logger.error("This appears to be a feature mismatch error.")
-                logger.error("Ensure the model was retrained with the correct feature exclusions.")
-                logger.error("Expected features should exclude: Is_Renewing_Client, Client_Type, Credit_Risk_Score, Default")
+            if os.path.exists(base_model_path) and os.path.exists(fairness_components_path):
+                logger.info("Attempting to reconstruct fairness model from components...")
                 
-            raise RuntimeError(f"Prediction failed: {e}")
+                # Load base model
+                with open(base_model_path, 'rb') as f:
+                    base_model = pickle.load(f)
+                
+                # Load fairness components
+                with open(fairness_components_path, 'rb') as f:
+                    fairness_components = pickle.load(f)
+                
+                # Reconstruct fairness-aware model
+                self.model = FairnessAwareModel(base_model, fairness_components)
+                self.is_fairness_aware = True
+                self.available_sensitive_features = list(fairness_components.keys())
+                
+                logger.info("Successfully reconstructed fairness-aware model from components.")
+            else:
+                # Try to load metadata and understand the structure
+                metadata_path = os.path.join(MODEL_DIR, 'model_metadata.json')
+                if os.path.exists(metadata_path):
+                    import json
+                    with open(metadata_path, 'r') as f:
+                        metadata = json.load(f)
+                    
+                    if metadata.get('fairness_applied', False):
+                        logger.warning("Metadata indicates fairness model but components not found. Loading as standard model.")
+                
+                raise FileNotFoundError("Fairness model components not found")
+                
+        except Exception as e:
+            logger.warning(f"Failed to reconstruct fairness model: {e}")
+            raise e
 
-    def _get_prediction_features(self, df_transformed: pd.DataFrame) -> List[str]:
-        """Get features for prediction based on what the model was actually trained on."""
-        
-        # FIRST: Try to use saved feature info from training
-        if self.features_info and 'available_features' in self.features_info:
-            saved_features = self.features_info['available_features']
-            available_features = [f for f in saved_features if f in df_transformed.columns]
-            if available_features:
-                logger.info(f"Using saved training features: {len(available_features)} features")
-                return available_features
-        
-        # FALLBACK: If no saved features, use the same logic as training
-        component_features = [
-            'Credit_Behavior_Score', 'Financial_Stability_Score', 'Cultural_Context_Score'
+    def _validate_input_data(self, df: pd.DataFrame) -> None:
+        """Validate input data contains all required features."""
+        required_features = [
+            # Financial features
+            'Employment_Sector', 'Employment_Tenure_Months', 'Net_Salary_Per_Cutoff',
+            'Salary_Frequency', 'Housing_Status', 'Years_at_Current_Address',
+            'Number_of_Dependents', 'Comaker_Employment_Tenure_Months',
+            'Comaker_Net_Salary_Per_Cutoff', 'Other_Income_Source',
+            # Cultural features
+            'Household_Head', 'Comaker_Relationship', 'Has_Community_Role',
+            'Paluwagan_Participation', 'Disaster_Preparedness'
         ]
         
-        raw_features = [
-            'Net_Salary_Per_Cutoff', 'Employment_Tenure_Months', 'Number_of_Dependents',
-            'Years_at_Current_Address', 'Late_Payment_Count', 'Grace_Period_Usage_Rate'
+        missing_features = [f for f in required_features if f not in df.columns]
+        if missing_features:
+            raise ValueError(f"Missing required features: {missing_features}")
+        
+        # Check for any null values in required features
+        null_features = [f for f in required_features if df[f].isnull().any()]
+        if null_features:
+            raise ValueError(f"Null values found in features: {null_features}")
+
+    def _preprocess_input(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Preprocess input data to match training data format."""
+        df_processed = df.copy()
+        
+        # Categorical features that need standardization
+        categorical_features = [
+            'Employment_Sector', 'Salary_Frequency', 'Housing_Status', 
+            'Household_Head', 'Comaker_Relationship', 'Has_Community_Role',
+            'Paluwagan_Participation', 'Other_Income_Source', 'Disaster_Preparedness'
         ]
         
-        # CRITICAL: Same exclusions as training
-        excluded_features = [
-            'Is_Renewing_Client', 'Client_Type', 'Credit_Risk_Score', 'Default'
+        # Standardize categorical values (same as in training)
+        for col in categorical_features:
+            if col in df_processed.columns and df_processed[col].dtype == 'object':
+                # Strip whitespace
+                df_processed[col] = df_processed[col].astype(str).str.strip()
+                
+                # Specific standardizations based on training preprocessing
+                if col == 'Housing_Status':
+                    df_processed[col] = df_processed[col].str.capitalize()
+                elif col == 'Employment_Sector':
+                    df_processed[col] = df_processed[col].str.capitalize()
+                elif col in ['Household_Head', 'Has_Community_Role', 'Paluwagan_Participation']:
+                    df_processed[col] = df_processed[col].str.capitalize()
+        
+        # Numerical features validation and preprocessing
+        numerical_cols = [
+            'Employment_Tenure_Months', 'Net_Salary_Per_Cutoff',
+            'Years_at_Current_Address', 'Number_of_Dependents',
+            'Comaker_Employment_Tenure_Months', 'Comaker_Net_Salary_Per_Cutoff'
         ]
         
-        candidate_features = component_features + raw_features
-        final_features = [f for f in candidate_features 
-                        if f in df_transformed.columns and f not in excluded_features]
+        # Ensure non-negative values and reasonable ranges
+        for col in numerical_cols:
+            if col in df_processed.columns:
+                # Ensure non-negative
+                df_processed[col] = df_processed[col].clip(lower=0)
         
-        logger.info(f"Using fallback features: {len(final_features)} features")
-        return final_features
+        # Apply capped penalty logic (same as training)
+        if 'Number_of_Dependents' in df_processed.columns:
+            df_processed['Number_of_Dependents'] = np.minimum(df_processed['Number_of_Dependents'], 5)
+        
+        return df_processed
 
-
-    def _extract_component_scores(self, df_transformed: pd.DataFrame, client_type: str) -> Dict[str, Any]:
-        """Extract component scores with feature isolation details."""
-        scores = {
-            'financial_stability': float(df_transformed['Financial_Stability_Score'].iloc[0]),
-            'cultural_context': float(df_transformed['Cultural_Context_Score'].iloc[0]),
-            'client_type': client_type
-        }
-        
-        # Add credit behavior for renewing clients
-        if client_type == "renewing" and 'Credit_Behavior_Score' in df_transformed.columns:
-            scores['credit_behavior'] = float(df_transformed['Credit_Behavior_Score'].iloc[0])
-        
-        # Add final score
-        if 'Credit_Risk_Score' in df_transformed.columns:
-            scores['final_credit_risk'] = float(df_transformed['Credit_Risk_Score'].iloc[0])
-        
-        # Add effective scores showing conditional logic
-        late_payments = df_transformed.get('Late_Payment_Count', pd.Series([0])).iloc[0] if 'Late_Payment_Count' in df_transformed.columns else 0
-        grace_usage = df_transformed.get('Grace_Period_Usage_Rate', pd.Series([0])).iloc[0] if 'Grace_Period_Usage_Rate' in df_transformed.columns else 0
-        
-        if client_type == "renewing":
-            scores['effective_late_payments'] = float(late_payments)
-            scores['effective_grace_usage'] = float(grace_usage)
-        else:
-            scores['effective_late_payments'] = 0.0  # Neutralized for new clients
-            scores['effective_grace_usage'] = 0.0   # Neutralized for new clients
-        
-        # Add component weights if available
-        if self.config:
-            client_enum = ClientType.RENEWING if client_type == "renewing" else ClientType.NEW
+    def predict(self, input_data: LoanApplicationRequest, 
+                apply_fairness: bool = True, 
+                sensitive_feature_name: Optional[str] = None) -> Dict[str, Any]:
+        """Make a prediction based on the input data with support for fairness-aware models."""
+        try:
+            # Validate service is properly initialized
+            if self.model is None:
+                raise RuntimeError("PredictionService is not properly initialized. Model must be loaded.")
+            
+            # Validate input data
+            if input_data is None:
+                raise ValueError("Input data cannot be None.")
+            
+            # Convert to DataFrame
             try:
-                client_config = self.config.get_client_config(client_enum)
-                scores['component_weights'] = {
-                    comp_name: comp_config.max_contribution_pct 
-                    for comp_name, comp_config in client_config.components.items()
-                }
-                scores['max_cultural_impact'] = client_config.components['cultural_context'].max_contribution_pct
+                df = pd.DataFrame([input_data.model_dump()])
             except Exception as e:
-                logger.warning(f"Could not get component weights: {e}")
-        
-        return scores
-
-    def _get_feature_isolation_summary(self, client_type: str) -> Dict[str, Any]:
-        """Get summary of feature isolation constraints."""
-        if client_type == "new":
-            return {
-                "feature_isolation_active": True,
-                "client_type": "new",
-                "scoring_weights": {
-                    "financial_stability": "80%",
-                    "cultural_context": "20%"
-                },
-                "cultural_constraints": {
-                    "community_role_max_impact": "0.4%",
-                    "paluwagan_max_impact": "0.6%",
-                    "total_cultural_cap": "20%"
-                },
-                "leakage_prevention": {
-                    "perfect_predictors": "Mathematically constrained",
-                    "payment_history": "Neutralized for new clients",
-                    "bias_mitigation": "Cultural factors severely limited"
-                }
+                raise ValueError(f"Failed to convert input data to DataFrame: {e}")
+            
+            # Validate and preprocess input data
+            try:
+                self._validate_input_data(df)
+                df_processed = self._preprocess_input(df)
+            except Exception as e:
+                raise ValueError(f"Input validation/preprocessing failed: {e}")
+            
+            # Make prediction using the trained pipeline
+            try:
+                if self.is_fairness_aware:
+                    # For fairness-aware model
+                    if apply_fairness:
+                        # Determine which sensitive feature to use
+                        if sensitive_feature_name is None:
+                            sensitive_feature_name = self.default_sensitive_feature
+                        
+                        # If still None, use the first available sensitive feature
+                        if sensitive_feature_name is None and self.available_sensitive_features:
+                            sensitive_feature_name = self.available_sensitive_features[0]
+                            logger.info(f"No sensitive feature specified, using: {sensitive_feature_name}")
+                        
+                        # Get binary prediction with fairness
+                        if sensitive_feature_name and sensitive_feature_name in self.available_sensitive_features:
+                            try:
+                                binary_prediction = self.model.predict(
+                                    df_processed, 
+                                    apply_fairness=True, 
+                                    sensitive_feature_name=sensitive_feature_name
+                                )[0]
+                                logger.info(f"Applied fairness correction for: {sensitive_feature_name}")
+                            except Exception as fairness_error:
+                                logger.warning(f"Fairness correction failed: {fairness_error}. Using base model.")
+                                binary_prediction = self.model.predict(df_processed, apply_fairness=False)[0]
+                        else:
+                            # Fallback to base model if sensitive feature not available
+                            binary_prediction = self.model.predict(df_processed, apply_fairness=False)[0]
+                            logger.warning(f"Sensitive feature '{sensitive_feature_name}' not available. Using base model.")
+                    else:
+                        # Use base model without fairness
+                        binary_prediction = self.model.predict(df_processed, apply_fairness=False)[0]
+                    
+                    # Get probability from base model (fairness only affects binary prediction)
+                    prediction_proba = self.model.predict_proba(df_processed)
+                else:
+                    # For standard model
+                    prediction_proba = self.model.predict_proba(df_processed)
+                    binary_prediction = self.model.predict(df_processed)[0]
+                
+                # Extract probability of default
+                if prediction_proba.shape[1] < 2:
+                    raise RuntimeError("Model does not provide probability for positive class.")
+                
+                probability_of_default = float(prediction_proba[0, 1])
+                
+                # For standard models, ensure binary prediction matches threshold
+                if not self.is_fairness_aware or not apply_fairness:
+                    binary_prediction = int(probability_of_default >= self.default_threshold)
+                
+            except Exception as e:
+                raise RuntimeError(f"Failed to make prediction: {e}")
+            
+            # Validate probability is in valid range
+            if not (0 <= probability_of_default <= 1):
+                logger.warning(f"Probability of default {probability_of_default} is outside [0,1] range. Clipping.")
+                probability_of_default = max(0, min(1, probability_of_default))
+                # Recalculate binary prediction after clipping if not using fairness
+                if not self.is_fairness_aware or not apply_fairness:
+                    binary_prediction = int(probability_of_default >= self.default_threshold)
+            
+            result = {
+                "probability_of_default": probability_of_default,
+                "default_prediction": int(binary_prediction),
+                "threshold_used": self.default_threshold,
+                "is_fairness_aware": self.is_fairness_aware,
+                "fairness_applied": self.is_fairness_aware and apply_fairness
             }
-        else:
-            return {
-                "feature_isolation_active": True,
-                "client_type": "renewing",
-                "scoring_weights": {
-                    "credit_behavior": "60%",
-                    "financial_stability": "37%", 
-                    "cultural_context": "3%"
-                },
-                "cultural_constraints": {
-                    "community_role_max_impact": "0.015%",
-                    "paluwagan_max_impact": "0.024%",
-                    "total_cultural_cap": "3%"
-                },
-                "leakage_prevention": {
-                    "perfect_predictors": "Completely neutralized",
-                    "payment_history": "Primary factor for existing clients",
-                    "bias_mitigation": "Cultural factors extremely limited"
-                }
-            }
-
-    def get_cultural_analysis(self, input_data: LoanApplicationRequest) -> Dict[str, Any]:
-        """Get detailed analysis using enhanced feature isolation system."""
-        try:
-            if not self.enhanced_transformer:
-                raise RuntimeError("Enhanced transformer not loaded.")
             
-            # Convert to DataFrame
-            df = pd.DataFrame([input_data.model_dump()])
+            if self.is_fairness_aware and apply_fairness and sensitive_feature_name:
+                result["sensitive_feature_used"] = sensitive_feature_name
             
-            # Validate schema
-            df_fixed, validation_issues = validate_loan_application_schema(df)
-            if validation_issues:
-                logger.warning(f"Schema issues found and fixed: {validation_issues}")
-                df = df_fixed
+            return result
             
-            # Get detailed explanation using enhanced system
-            applicant_series = df.iloc[0]
-            explanation = self.enhanced_transformer.get_score_explanation(applicant_series)
-            
-            return {
-                "detailed_explanation": explanation,
-                "component_breakdown": explanation.get('component_contributions', {}),
-                "feature_isolation": explanation.get('feature_isolation_summary', {}),
-                "bias_reduction_notes": explanation.get('leakage_prevention', {}),
-                "model_fairness": {
-                    "mathematical_constraints": "All features capped to prevent dominance",
-                    "cultural_bias_prevention": "Perfect predictors neutralized",
-                    "client_type_fairness": "Different scoring for new vs renewing clients"
-                },
-                "client_type": explanation.get('client_type', 'unknown'),
-                "score_interpretation": explanation.get('score_interpretation', 'No interpretation available')
-            }
-            
+        except ValueError as e:
+            logger.error(f"Input validation error: {e}")
+            raise
+        except RuntimeError as e:
+            logger.error(f"Runtime error during prediction: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Error in cultural analysis: {e}")
-            raise RuntimeError(f"Cultural analysis failed: {e}")
-
-    def get_score_explanation(self, input_data: LoanApplicationRequest) -> Dict[str, Any]:
-        """Get human-readable score explanation using enhanced feature isolation."""
-        try:
-            if not self.enhanced_transformer:
-                raise RuntimeError("Enhanced transformer not loaded.")
-            
-            # Convert to DataFrame
-            df = pd.DataFrame([input_data.model_dump()])
-            
-            # Validate schema
-            df_fixed, validation_issues = validate_loan_application_schema(df)
-            if validation_issues:
-                logger.warning(f"Schema issues found and fixed: {validation_issues}")
-                df = df_fixed
-            
-            # Get full explanation
-            applicant_series = df.iloc[0]
-            explanation = self.enhanced_transformer.get_score_explanation(applicant_series)
-            
-            # Add service-specific context
-            explanation['prediction_service_info'] = {
-                'feature_isolation_active': True,
-                'data_leakage_prevention': True,
-                'mathematical_constraints': True,
-                'model_version': self.hybrid_model_info.get('version', '2.0.0')
-            }
-            
-            return explanation
-            
-        except Exception as e:
-            logger.error(f"Error getting score explanation: {e}")
-            raise RuntimeError(f"Score explanation failed: {e}")
-
-    def get_feature_caps_summary(self) -> Dict[str, Any]:
-        """Get comprehensive summary of all feature caps and constraints."""
-        if not self.config:
-            return {
-                "feature_caps_active": False,
-                "note": "Enhanced config not available"
-            }
-        
-        try:
-            caps_summary = self.config.get_feature_caps_summary()
-            
-            # Add leakage mitigation details
-            leakage_details = {
-                "community_role": {
-                    "original_impact": "Perfect predictor (0% default rate)",
-                    "constrained_impact": {
-                        "new_clients": "Max 0.4% of final score",
-                        "renewing_clients": "Max 0.015% of final score"
-                    }
-                },
-                "paluwagan_participation": {
-                    "original_impact": "66% default rate difference",
-                    "constrained_impact": {
-                        "new_clients": "Max 0.6% of final score", 
-                        "renewing_clients": "Max 0.024% of final score"
-                    }
-                }
-            }
-            
-            return {
-                "feature_caps_active": True,
-                "caps_summary": caps_summary,
-                "leakage_mitigation": leakage_details,
-                "mathematical_constraints": {
-                    "individual_features": "Each feature has strict contribution caps",
-                    "component_level": "Components cannot exceed specified percentages",
-                    "client_type_specific": "Different constraints for new vs renewing clients"
-                }
-            }
-            
-        except Exception as e:
-            logger.warning(f"Error getting feature caps: {e}")
-            return {
-                "feature_caps_active": True,
-                "error": f"Could not retrieve caps summary: {e}"
-            }
+            logger.error(f"Unexpected error during prediction: {e}")
+            raise RuntimeError(f"Prediction failed: {e}")
 
     def set_threshold(self, threshold: float) -> None:
         """Set the threshold for binary classification."""
@@ -486,72 +369,157 @@ class PredictionService:
         self.default_threshold = threshold
         logger.info(f"Default threshold set to {threshold}")
 
+    def set_default_sensitive_feature(self, feature_name: str) -> None:
+        """Set the default sensitive feature for fairness-aware predictions."""
+        if self.is_fairness_aware and feature_name in self.available_sensitive_features:
+            self.default_sensitive_feature = feature_name
+            logger.info(f"Default sensitive feature set to: {feature_name}")
+        else:
+            raise ValueError(f"Feature '{feature_name}' is not available. Available features: {self.available_sensitive_features}")
+
     def _is_service_ready(self) -> bool:
-        """Check if all required components are loaded."""
-        return all([
-            self.model is not None,
-            self.scaler is not None,
-            self.poly is not None,
-            self.selector is not None,
-            self.enhanced_transformer is not None
-        ])
+        """Check if the service is ready to make predictions."""
+        return self.model is not None
 
     @staticmethod
     def transform_pod_to_credit_score(pod: float, min_score: int = 300, max_score: int = 850) -> int:
-        """Transform probability of default to credit score."""
+        """Transform probability of default to credit score with error handling."""
         try:
+            # Validate inputs
             if not isinstance(pod, (int, float)):
                 raise TypeError("Probability of default must be a number.")
             
             if not (0 <= pod <= 1):
                 raise ValueError("Probability of default must be between 0 and 1.")
             
+            if not isinstance(min_score, int) or not isinstance(max_score, int):
+                raise TypeError("Min and max scores must be integers.")
+            
+            if min_score >= max_score:
+                raise ValueError("Min score must be less than max score.")
+            
+            if min_score < 0 or max_score < 0:
+                raise ValueError("Credit scores must be non-negative.")
+            
+            # Calculate credit score
             credit_score = min_score + (max_score - min_score) * (1 - pod)
+            
+            # Round and convert to integer
             credit_score = int(round(credit_score))
+            
+            # Ensure score is within bounds (safety check)
             credit_score = max(min_score, min(max_score, credit_score))
             
             return credit_score
             
-        except Exception as e:
+        except (TypeError, ValueError) as e:
             logger.error(f"Error transforming probability to credit score: {e}")
             raise
+        except Exception as e:
+            logger.error(f"Unexpected error in credit score transformation: {e}")
+            raise RuntimeError(f"Credit score transformation failed: {e}")
 
     def get_service_status(self) -> Dict[str, Any]:
         """Get the current status of the prediction service."""
-        return {
+        required_features = [
+            'Employment_Sector', 'Employment_Tenure_Months', 'Net_Salary_Per_Cutoff',
+            'Salary_Frequency', 'Housing_Status', 'Years_at_Current_Address',
+            'Number_of_Dependents', 'Comaker_Employment_Tenure_Months',
+            'Comaker_Net_Salary_Per_Cutoff', 'Other_Income_Source',
+            'Household_Head', 'Comaker_Relationship', 'Has_Community_Role',
+            'Paluwagan_Participation', 'Disaster_Preparedness'
+        ]
+        
+        categorical_features = [
+            'Employment_Sector', 'Salary_Frequency', 'Housing_Status', 
+            'Household_Head', 'Comaker_Relationship', 'Has_Community_Role',
+            'Paluwagan_Participation', 'Other_Income_Source', 'Disaster_Preparedness'
+        ]
+        
+        numerical_features = [
+            'Employment_Tenure_Months', 'Net_Salary_Per_Cutoff',
+            'Years_at_Current_Address', 'Number_of_Dependents',
+            'Comaker_Employment_Tenure_Months', 'Comaker_Net_Salary_Per_Cutoff'
+        ]
+        
+        status = {
             "is_ready": self._is_service_ready(),
             "model_loaded": self.model is not None,
-            "encoder_loaded": self.encoder is not None,
-            "scaler_loaded": self.scaler is not None,
-            "poly_loaded": self.poly is not None,
-            "selector_loaded": self.selector is not None,
-            "enhanced_transformer_loaded": self.enhanced_transformer is not None,
-            "config_loaded": self.config is not None,
+            "is_fairness_aware": self.is_fairness_aware,
             "current_threshold": self.default_threshold,
-            "model_type": self.hybrid_model_info.get('model_type', 'enhanced_feature_isolation'),
-            "feature_isolation_enabled": self.hybrid_model_info.get('feature_isolation_enabled', True),
-            "bias_reduction_active": True,
-            "mathematical_constraints_active": True,
-            "version": self.hybrid_model_info.get('version', '2.0.0'),
-            "client_type_configurations": {
-                "new_clients": "Financial (80%) + Cultural (20%)",
-                "renewing_clients": "Credit (60%) + Financial (37%) + Cultural (3%)"
-            },
-            "data_leakage_prevention": {
-                "community_role_constrained": True,
-                "paluwagan_constrained": True,
-                "perfect_predictors_neutralized": True
+            "required_features": required_features,
+            "categorical_features": categorical_features,
+            "numerical_features": numerical_features,
+            "expected_feature_values": {
+                "Employment_Sector": ["Public", "Private"],
+                "Salary_Frequency": ["Monthly", "Bimonthly", "Biweekly", "Weekly"],
+                "Housing_Status": ["Owned", "Rented"],
+                "Household_Head": ["Yes", "No"],
+                "Comaker_Relationship": ["Friend", "Sibling", "Parent", "Spouse"],
+                "Has_Community_Role": ['None', 'Member', 'Leader', 'Multiple Leader'],
+                "Paluwagan_Participation": ['Never', 'Rarely', 'Sometimes', 'Frequently'],
+                "Other_Income_Source": ["None", "Freelance", "Business", "OFW Remittance"],
+                "Disaster_Preparedness": ["None", "Savings", "Insurance", "Community Plan"]
             }
         }
+        
+        if self.is_fairness_aware:
+            status["available_sensitive_features"] = self.available_sensitive_features
+            status["default_sensitive_feature"] = self.default_sensitive_feature
+        
+        return status
 
+    def get_feature_importance(self) -> Optional[Dict[str, float]]:
+        """Get feature importance from the trained model if available."""
+        try:
+            if not self._is_service_ready():
+                return None
+            
+            # For fairness-aware model, use base_model
+            model_to_check = self.model.base_model if self.is_fairness_aware else self.model
+            
+            # Check if the model has a classifier with coefficients
+            if hasattr(model_to_check, 'named_steps') and 'classifier' in model_to_check.named_steps:
+                classifier = model_to_check.named_steps['classifier']
+                if hasattr(classifier, 'coef_'):
+                    # Get feature names from preprocessor
+                    preprocessor = model_to_check.named_steps.get('preprocessor')
+                    if preprocessor and hasattr(preprocessor, 'get_feature_names_out'):
+                        try:
+                            feature_names = preprocessor.get_feature_names_out()
+                            coefficients = classifier.coef_[0]
+                            
+                            # Create feature importance dictionary
+                            feature_importance = {}
+                            for i, feature in enumerate(feature_names):
+                                if i < len(coefficients):
+                                    feature_importance[str(feature)] = float(coefficients[i])
+                            
+                            # Sort by absolute importance
+                            sorted_features = dict(sorted(feature_importance.items(), 
+                                                        key=lambda x: abs(x[1]), reverse=True))
+                            
+                            return sorted_features
+                        except Exception as e:
+                            logger.warning(f"Could not extract feature names: {e}")
+                            return None
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting feature importance: {e}")
+            return None
 
-# Initialize the prediction service
-def initialize_prediction_service(threshold: float = 0.5) -> Optional[PredictionService]:
-    """Initialize the prediction service with enhanced transformers."""
+# Initialize the prediction service with proper error handling
+def initialize_prediction_service(threshold: float = 0.5, default_sensitive_feature: Optional[str] = None) -> Optional[PredictionService]:
+    """Initialize the prediction service with proper error handling."""
     try:
-        logger.info("Initializing Prediction Service with enhanced feature isolation...")
-        service = PredictionService(default_threshold=threshold)
-        logger.info("Prediction Service initialized successfully with enhanced transformers.")
+        logger.info("Initializing PredictionService...")
+        service = PredictionService(
+            default_threshold=threshold,
+            default_sensitive_feature=default_sensitive_feature
+        )
+        logger.info("PredictionService initialized successfully.")
         return service
     except Exception as e:
         logger.error(f"Failed to initialize PredictionService: {e}")
@@ -560,9 +528,12 @@ def initialize_prediction_service(threshold: float = 0.5) -> Optional[Prediction
 # Initialize the service
 prediction_service = initialize_prediction_service()
 
-# Complete workflow function with enhanced feature isolation
-def get_credit_assessment(input_data, threshold: float = 0.5) -> Optional[Dict[str, Any]]:
-    """Complete workflow using enhanced feature isolation system."""
+# Complete workflow function for your model
+def get_credit_assessment(input_data, 
+                         threshold: float = 0.5,
+                         apply_fairness: bool = True,
+                         sensitive_feature_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Complete workflow: input -> POD -> binary prediction -> credit score."""
     if prediction_service is None:
         logger.error("PredictionService is not available.")
         return None
@@ -572,16 +543,19 @@ def get_credit_assessment(input_data, threshold: float = 0.5) -> Optional[Dict[s
         if prediction_service.default_threshold != threshold:
             prediction_service.set_threshold(threshold)
         
-        # Get prediction using enhanced feature isolation
-        prediction_result = prediction_service.predict(input_data)
+        # Step 1: Get probability of default and binary prediction
+        prediction_result = prediction_service.predict(
+            input_data, 
+            apply_fairness=apply_fairness,
+            sensitive_feature_name=sensitive_feature_name
+        )
         pod = prediction_result["probability_of_default"]
         binary_prediction = prediction_result["default_prediction"]
-        component_scores = prediction_result["component_scores"]
         
-        # Convert to credit score
+        # Step 2: Convert to credit score
         credit_score = PredictionService.transform_pod_to_credit_score(pod)
         
-        # Add risk assessment
+        # Step 3: Add risk assessment
         if credit_score >= 750:
             risk_level = "Low Risk"
         elif credit_score >= 650:
@@ -589,315 +563,102 @@ def get_credit_assessment(input_data, threshold: float = 0.5) -> Optional[Dict[s
         else:
             risk_level = "High Risk"
         
-        # Recommendation based on binary prediction
+        # Step 4: Recommendation based on binary prediction
         recommendation = "Decline" if binary_prediction == 1 else "Approve"
         
-        # Get detailed analysis using enhanced system
-        try:
-            detailed_analysis = prediction_service.get_cultural_analysis(input_data)
-        except Exception as e:
-            logger.warning(f"Failed to get detailed analysis: {e}")
-            detailed_analysis = {"error": "Detailed analysis unavailable"}
-        
-        # Get feature caps summary
-        try:
-            feature_caps = prediction_service.get_feature_caps_summary()
-        except Exception as e:
-            logger.warning(f"Failed to get feature caps: {e}")
-            feature_caps = {"error": "Feature caps unavailable"}
-        
-        # Determine client type
-        client_type = component_scores.get('client_type', 'unknown')
-        
-        return {
+        result = {
             "probability_of_default": pod,
             "default_prediction": binary_prediction,
             "credit_score": credit_score,
             "risk_level": risk_level,
             "recommendation": recommendation,
             "threshold_used": threshold,
-            "component_scores": component_scores,
-            "detailed_analysis": detailed_analysis,
-            "feature_caps_summary": feature_caps,
-            "model_type": "enhanced_feature_isolation",
-            "feature_isolation_enabled": True,
-            "client_type": client_type,
-            "bias_reduction_active": True,
-            "mathematical_constraints_active": True,
-            "feature_isolation_summary": prediction_result.get("feature_isolation_summary", {}),
-            "fairness_notes": {
-                "new_clients": "Assessed using Financial (80%) + Cultural (20%) with severe cultural constraints",
-                "renewing_clients": "Assessed using Credit (60%) + Financial (37%) + Cultural (3%) with extreme cultural constraints",
-                "bias_mitigation": "Cultural factors mathematically capped to prevent discrimination",
-                "perfect_predictors": "Community role and Paluwagan completely neutralized",
-                "payment_history": "Neutralized for new clients, primary factor for renewing clients",
-                "transparency": "Full feature contribution breakdown available with mathematical caps"
-            }
+            "is_fairness_aware": prediction_result.get("is_fairness_aware", False),
+            "fairness_applied": prediction_result.get("fairness_applied", False)
         }
+        
+        if "sensitive_feature_used" in prediction_result:
+            result["sensitive_feature_used"] = prediction_result["sensitive_feature_used"]
+        
+        return result
         
     except Exception as e:
         logger.error(f"Credit assessment failed: {e}")
         return None
 
-
-# =================================================================
-# BACKWARDS COMPATIBILITY WRAPPER
-# =================================================================
-
-class CulturalScoreTransformer:
-    """
-    Backwards compatibility wrapper that maintains the old interface
-    while using the enhanced feature isolation system internally.
-    """
+# Utility function to validate input data format
+def validate_loan_application_data(data: dict) -> List[str]:
+    """Validate that the input data contains all required fields with correct types."""
+    errors = []
     
-    def __init__(self):
-        if prediction_service and prediction_service.enhanced_transformer:
-            self.enhanced_transformer = prediction_service.enhanced_transformer
-            self.config = prediction_service.config
-        else:
-            self.config = EnhancedCreditScoringConfig()
-            self.enhanced_transformer = EnhancedCreditScoringTransformer(self.config)
-        
-        # Legacy attributes for compatibility
-        self.cultural_scoring_rules = self.config.leakage_mitigation_features if hasattr(self.config, 'leakage_mitigation_features') else {}
-        self.binary_scoring_rules = {
-            'community_role_boost': 0.02,  # Severely limited
-            'paluwagan_boost': 0.03,       # Severely limited
-            'household_head_boost': 0.10
-        }
-        self.dependents_penalty_per_person = -0.01  # Limited penalty
+    required_fields = {
+        'Employment_Sector': str,
+        'Employment_Tenure_Months': (int, float),
+        'Net_Salary_Per_Cutoff': (int, float),
+        'Salary_Frequency': str,
+        'Housing_Status': str,
+        'Years_at_Current_Address': (int, float),
+        'Number_of_Dependents': (int, float),
+        'Comaker_Employment_Tenure_Months': (int, float),
+        'Comaker_Net_Salary_Per_Cutoff': (int, float),
+        'Other_Income_Source': str,
+        'Household_Head': str,
+        'Comaker_Relationship': str,
+        'Has_Community_Role': str,
+        'Paluwagan_Participation': str,
+        'Disaster_Preparedness': str
+    }
     
-    def transform_cultural_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Legacy method using enhanced feature isolation internally."""
-        return self.enhanced_transformer.transform(df)
+    # Check for missing fields
+    for field in required_fields:
+        if field not in data:
+            errors.append(f"Missing required field: {field}")
+        elif data[field] is None:
+            errors.append(f"Field {field} cannot be None")
+        elif not isinstance(data[field], required_fields[field]):
+            errors.append(f"Field {field} must be of type {required_fields[field]}")
     
-    def calculate_cultural_composite_score(self, df: pd.DataFrame) -> np.ndarray:
-        """Legacy method using enhanced feature isolation internally."""
-        transformed_df = self.enhanced_transformer.transform(df)
-        return transformed_df['Cultural_Context_Score'].values
+    # Validate numerical ranges
+    if 'Employment_Tenure_Months' in data and data['Employment_Tenure_Months'] < 0:
+        errors.append("Employment_Tenure_Months must be non-negative")
     
-    def get_scoring_explanation(self) -> Dict[str, Any]:
-        """Legacy method returning enhanced system configuration."""
-        if self.config and hasattr(self.config, 'get_feature_caps_summary'):
-            return self.config.get_feature_caps_summary()
-        else:
-            return {
-                "enhanced_mode": True,
-                "feature_isolation": True,
-                "data_leakage_prevention": True,
-                "cultural_constraints": {
-                    "community_role": "Severely limited to prevent bias",
-                    "paluwagan": "Severely limited to prevent leakage",
-                    "mathematical_caps": "All features mathematically constrained"
-                }
-            }
-
-
-class FinancialFeatureEngineer:
-    """
-    Backwards compatibility wrapper for financial feature engineering.
-    """
+    if 'Net_Salary_Per_Cutoff' in data and data['Net_Salary_Per_Cutoff'] <= 0:
+        errors.append("Net_Salary_Per_Cutoff must be positive")
     
-    def __init__(self):
-        if prediction_service and prediction_service.enhanced_transformer:
-            self.enhanced_transformer = prediction_service.enhanced_transformer
-        else:
-            config = EnhancedCreditScoringConfig()
-            self.enhanced_transformer = EnhancedCreditScoringTransformer(config)
+    if 'Years_at_Current_Address' in data and data['Years_at_Current_Address'] < 0:
+        errors.append("Years_at_Current_Address must be non-negative")
     
-    def create_financial_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Create features using enhanced feature isolation system."""
-        transformed_df = self.enhanced_transformer.transform(df)
-        
-        # Add legacy feature names for compatibility
-        if 'Financial_Stability_Score' in transformed_df.columns:
-            transformed_df['Employment_Stability_Score'] = transformed_df['Financial_Stability_Score'] * 0.3
-            transformed_df['Income_Capacity_Score'] = transformed_df['Financial_Stability_Score'] * 0.4
-            transformed_df['Affordability_Score'] = transformed_df['Financial_Stability_Score'] * 0.3
-        
-        return transformed_df
+    if 'Number_of_Dependents' in data and data['Number_of_Dependents'] < 0:
+        errors.append("Number_of_Dependents must be non-negative")
     
-    def get_feature_list(self) -> Dict[str, list]:
-        """Get feature list for backwards compatibility."""
-        return get_available_features()
-
-
-def get_all_expected_features() -> Dict[str, list]:
-    """Backwards compatibility function returning enhanced feature structure."""
-    return get_available_features()
-
-
-def validate_schema_compliance(df: pd.DataFrame) -> tuple[pd.DataFrame, list]:
-    """Schema validation using enhanced transformers module."""
-    return validate_loan_application_schema(df)
-
-
-# =================================================================
-# DEMONSTRATION AND TESTING
-# =================================================================
-
-def demonstrate_feature_isolation():
-    """Demonstrate the enhanced feature isolation system in prediction service."""
+    # Validate categorical values
+    valid_values = {
+        'Employment_Sector': ['Public', 'Private'],
+        'Salary_Frequency': ['Monthly', 'Bimonthly', 'Biweekly', 'Weekly'],
+        'Housing_Status': ['Owned', 'Rented'],
+        'Household_Head': ['Yes', 'No'],
+        'Comaker_Relationship': ['Friend', 'Sibling', 'Parent', 'Spouse'],
+        'Has_Community_Role': ['None', 'Member', 'Leader', 'Multiple Leader'],
+        'Paluwagan_Participation': ['Never', 'Rarely', 'Sometimes', 'Frequently'],
+        'Other_Income_Source': ['None', 'Freelance', 'Business', 'OFW Remittance'],
+        'Disaster_Preparedness': ['None', 'Savings', 'Insurance', 'Community Plan']
+    }
     
-    print("=== ENHANCED FEATURE ISOLATION DEMONSTRATION ===")
+    for field, valid_list in valid_values.items():
+        if field in data and data[field] not in valid_list:
+            errors.append(f"{field} must be one of {valid_list}, got '{data[field]}'")
     
-    # Sample data with different client types showing feature isolation
-    sample_applications = [
-        {
-            # New Client - Cultural factors limited
-            'Employment_Sector': 'Public',
-            'Employment_Tenure_Months': 24,
-            'Net_Salary_Per_Cutoff': 22000,
-            'Comaker_Net_Salary_Per_Cutoff': 18000,
-            'Number_of_Dependents': 1,
-            'Is_Renewing_Client': 0,  # NEW CLIENT
-            'Late_Payment_Count': 3,  # Will be neutralized
-            'Grace_Period_Usage_Rate': 0.5,  # Will be neutralized
-            'Had_Special_Consideration': 0,
-            'Years_at_Current_Address': 3.0,
-            'Housing_Status': 'Owned',
-            'Paluwagan_Participation': 'Yes',  # Was perfect predictor - now constrained
-            'Has_Community_Role': 'Yes',  # Was perfect predictor - now constrained
-            'Household_Head': 'Yes',
-            'Disaster_Preparedness': 'Insurance',
-            'Other_Income_Source': 'Business',
-            'Comaker_Relationship': 'Spouse',
-            'Salary_Frequency': 'Biweekly'
-        },
-        {
-            # Renewing Client - Payment history considered, cultural extremely limited
-            'Employment_Sector': 'Private',
-            'Employment_Tenure_Months': 36,
-            'Net_Salary_Per_Cutoff': 20000,
-            'Comaker_Net_Salary_Per_Cutoff': 0,
-            'Number_of_Dependents': 2,
-            'Is_Renewing_Client': 1,  # RENEWING CLIENT
-            'Late_Payment_Count': 1,  # Will be considered at full weight
-            'Grace_Period_Usage_Rate': 0.2,  # Will be considered at full weight
-            'Had_Special_Consideration': 0,
-            'Years_at_Current_Address': 2.0,
-            'Housing_Status': 'Rented',
-            'Paluwagan_Participation': 'Yes',  # Extremely limited impact (0.024%)
-            'Has_Community_Role': 'Yes',  # Extremely limited impact (0.015%)
-            'Household_Head': 'Yes',
-            'Disaster_Preparedness': 'Savings',
-            'Other_Income_Source': 'None',
-            'Comaker_Relationship': 'Friend',
-            'Salary_Frequency': 'Monthly'
-        }
-    ]
-    
-    for i, app_data in enumerate(sample_applications):
-        client_type = "New Client" if app_data['Is_Renewing_Client'] == 0 else "Renewing Client"
-        
-        print(f"\n--- {client_type} (Application {i+1}) ---")
-        print(f"Has Community Role: {app_data['Has_Community_Role']} (Perfect predictor)")
-        print(f"Paluwagan Participation: {app_data['Paluwagan_Participation']} (66% difference)")
-        print(f"Late Payments: {app_data['Late_Payment_Count']}")
-        print(f"Grace Usage: {app_data['Grace_Period_Usage_Rate']}")
-        
-        if app_data['Is_Renewing_Client'] == 0:
-            print("→ FEATURE ISOLATION FOR NEW CLIENT:")
-            print("  • Community Role impact: LIMITED to 0.4% max")
-            print("  • Paluwagan impact: LIMITED to 0.6% max") 
-            print("  • Payment history: NEUTRALIZED (0% impact)")
-            print("  • Cultural total: CAPPED at 20%")
-            print("  • Focus: Financial capacity (80%)")
-        else:
-            print("→ FEATURE ISOLATION FOR RENEWING CLIENT:")
-            print("  • Community Role impact: EXTREMELY LIMITED to 0.015% max")
-            print("  • Paluwagan impact: EXTREMELY LIMITED to 0.024% max")
-            print("  • Payment history: PRIMARY FACTOR (60% weight)")
-            print("  • Cultural total: EXTREMELY CAPPED at 3%")
-            print("  • Focus: Credit behavior (60%) + Financial (37%)")
-    
-    return sample_applications
-
+    return errors
 
 if __name__ == "__main__":
-    print("="*80)
-    print("ENHANCED PREDICTION SERVICE WITH FEATURE ISOLATION")
-    print("="*80)
-    
-    # Test service initialization
-    if prediction_service and prediction_service._is_service_ready():
-        print("✅ PredictionService initialized with enhanced feature isolation")
-        
+    # Check service status
+    if prediction_service:
         status = prediction_service.get_service_status()
-        print(f"✅ Model Type: {status['model_type']}")
-        print(f"✅ Feature Isolation: {status['feature_isolation_enabled']}")
-        print(f"✅ Bias Reduction: {status['bias_reduction_active']}")
-        print(f"✅ Mathematical Constraints: {status['mathematical_constraints_active']}")
-        print(f"✅ Version: {status['version']}")
+        print(f"Service Status: {status}")
         
-        print("\n📊 Client Type Configurations:")
-        for client_type, config in status['client_type_configurations'].items():
-            print(f"   {client_type.replace('_', ' ').title()}: {config}")
-        
-        print("\n🛡️ Data Leakage Prevention:")
-        for measure, active in status['data_leakage_prevention'].items():
-            print(f"   {measure.replace('_', ' ').title()}: {'✅' if active else '❌'}")
-        
-        # Test feature caps
-        try:
-            caps_summary = prediction_service.get_feature_caps_summary()
-            if caps_summary.get('feature_caps_active'):
-                print("\n🔒 Feature Isolation Summary:")
-                leakage = caps_summary.get('leakage_mitigation', {})
-                
-                if 'community_role' in leakage:
-                    print("   Community Role Constraints:")
-                    print(f"     Original: {leakage['community_role']['original_impact']}")
-                    constrained = leakage['community_role']['constrained_impact']
-                    print(f"     New Clients: {constrained['new_clients']}")
-                    print(f"     Renewing: {constrained['renewing_clients']}")
-                
-                if 'paluwagan_participation' in leakage:
-                    print("   Paluwagan Constraints:")
-                    print(f"     Original: {leakage['paluwagan_participation']['original_impact']}")
-                    constrained = leakage['paluwagan_participation']['constrained_impact']
-                    print(f"     New Clients: {constrained['new_clients']}")
-                    print(f"     Renewing: {constrained['renewing_clients']}")
-        except Exception as e:
-            print(f"   Could not retrieve feature caps: {e}")
-    
-    else:
-        print("❌ PredictionService failed to initialize")
-        print("   Check model files and transformer dependencies")
-    
-    print("\n--- Enhanced Feature Isolation Features ---")
-    print("✅ Mathematical feature caps prevent any single feature dominance")
-    print("✅ Perfect predictors (Community Role) completely neutralized")
-    print("✅ Data leakage (Paluwagan) mathematically constrained")
-    print("✅ Client-type specific scoring with different cultural constraints")
-    print("✅ Payment history neutralized for new clients (fair assessment)")
-    print("✅ Cultural factors severely limited to prevent bias")
-    print("✅ Component-level caps ensure balanced scoring")
-    print("✅ Full transparency with detailed explanations")
-    
-    # Demonstrate feature isolation
-    demonstrate_feature_isolation()
-    
-    print("\n" + "="*80)
-    print("🎯 ENHANCED PREDICTION SERVICE STATUS")
-    print("="*80)
-    
-    if prediction_service and prediction_service._is_service_ready():
-        print("✅ FULLY OPERATIONAL WITH ENHANCED FEATURE ISOLATION")
-        print("   - Complete mathematical feature isolation implemented")
-        print("   - Data leakage prevention verified and active") 
-        print("   - Client-type specific scoring with bias prevention")
-        print("   - Cultural factor constraints preventing discrimination")
-        print("   - Perfect predictor neutralization active")
-        print("   - Payment history conditional logic operational")
-        print("   - Component-level contribution caps enforced")
-        print("   - Full transparency and explainability available")
-        print("   - Backwards compatibility maintained")
-        print("   - Production-ready with comprehensive error handling")
-    else:
-        print("❌ SERVICE UNAVAILABLE")
-        print("   - Check model files in ./models/ or ../models/")
-        print("   - Ensure scripts/transformers.py is available")
-        print("   - Verify enhanced transformer dependencies")
-    
-    print("="*80)
+        # If fairness-aware, show available options
+        if status["is_fairness_aware"]:
+            print(f"\nFairness-aware model loaded!")
+            print(f"Available sensitive features: {status['available_sensitive_features']}")
+            
+            # Example: Set default
