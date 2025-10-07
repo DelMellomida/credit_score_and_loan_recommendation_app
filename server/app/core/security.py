@@ -25,7 +25,11 @@ def verify_password(password: str, hashed_password: str) -> bool:
         print(f"Password verification error: {e}")  # For debugging
         return False
 
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """
+    Create a JWT access token with expiration.
+    """
     try:
         to_encode = data.copy()
         expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES))
@@ -34,6 +38,19 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         return encoded_jwt
     except Exception as e:
         raise ValueError("Failed to create access token") from e
+
+def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """
+    Create a JWT refresh token with longer expiration (default 7 days).
+    """
+    try:
+        to_encode = data.copy()
+        expire = datetime.now(timezone.utc) + (expires_delta or timedelta(days=7))
+        to_encode.update({"exp": expire, "type": "refresh"})
+        encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+        return encoded_jwt
+    except Exception as e:
+        raise ValueError("Failed to create refresh token") from e
     
 def decode_token(token: str) -> Optional[Dict[str, Any]]:
     try:

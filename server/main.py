@@ -4,6 +4,7 @@ from app.api.auth_routes import router as auth_router
 from app.api.loan_routes import router as loan_router
 from contextlib import asynccontextmanager
 from app.database.connection import init_db
+from app.core.config import settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -20,7 +21,7 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change this in production
+    allow_origins=[settings.CLIENT_URL],  # Change this in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

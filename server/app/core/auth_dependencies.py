@@ -1,5 +1,6 @@
 # app/core/auth_dependencies.py
-from fastapi import Depends, HTTPException, status
+
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from app.core.security import decode_token
 from app.services.auth_service import auth_service
@@ -8,7 +9,7 @@ from typing import Dict
 # OAuth2 scheme for token extraction
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict:
+async def get_current_user(token: str = Depends(oauth2_scheme), request: Request = None) -> Dict:
     """
     Dependency to get current authenticated user from JWT token.
     
@@ -28,16 +29,27 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict:
     )
     
     try:
+        # Debug: Print raw Authorization header if available
+        if request:
+            auth_header = request.headers.get("authorization")
+            print(f"DEBUG: Raw Authorization header: {auth_header}")
+        else:
+            print("DEBUG: No request object for header inspection.")
+
         # Decode the JWT token
         payload = decode_token(token)
+        print(f"DEBUG: Decoded token payload: {payload}")
         if payload is None:
+            print("DEBUG: Token payload is None after decoding.")
             raise credentials_exception
-        
+
         # Extract email from token payload
         email: str = payload.get("sub")
+        print(f"DEBUG: Extracted email from token: {email}")
         if email is None:
+            print("DEBUG: No 'sub' field in token payload.")
             raise credentials_exception
-            
+
     except Exception as e:
         print(f"DEBUG: Token validation failed: {e}")  # Debug log
         raise credentials_exception

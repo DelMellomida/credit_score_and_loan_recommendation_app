@@ -19,7 +19,7 @@
   ],
   "features_removed_vif": [],
   "regularization_parameter": 0.01,
-  "training_date": "2025-07-26 23:20:22",
-  "test_roc_auc": 0.68293255301374,
+  "training_date": "2025-07-27 06:58:01",
+  "test_roc_auc": 0.7002659838997924,
   "fairness_applied": true
 }

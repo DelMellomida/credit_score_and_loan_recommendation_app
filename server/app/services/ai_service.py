@@ -1,5 +1,3 @@
-# app/services/ai_service.py
-
 import logging
 import json
 from typing import Dict, Any, Optional
@@ -112,49 +110,42 @@ class AIExplainabilityService:
 
     def _generate_technical_explanation(self, analysis_data: Dict[str, Any]) -> str:
         return (
-            "System Instruction: Technical Explanation\n"
-            "This applicant’s credit score was calculated using a penalized logistic regression model. It evaluates key financial and behavioral features such as: "
-            "income consistency, payment habits, address stability, co-maker credentials, and participation in community or informal lending systems. "
-            "The model adds polynomial combinations and selects only statistically strong predictors. This means the score reflects a reliable subset of traits that have shown correlation with default risk. "
-            "Each applicant is compared against historical repayment patterns to determine their Probability of Default (POD).\n\n"
-            f"Model Inputs and Evaluation Snapshot: {json.dumps(analysis_data, default=str)}"
+            "You are an expert data analyst. Explain this credit score analysis in technical terms using exactly 100 words. "
+            "Focus on the statistical model, feature engineering, and validation metrics. "
+            "Use professional terminology appropriate for data science peers.\n\n"
+            f"Analysis Data: {json.dumps(analysis_data, default=str)}"
         )
 
     def _generate_business_explanation(self, analysis_data: Dict[str, Any]) -> str:
         return (
-            "System Instruction: Business-Level Interpretation\n"
-            "Based on the model output, this score reflects the applicant’s expected repayment reliability. A lower POD suggests low risk of default and potential eligibility for standard lending terms. "
-            "A higher POD may trigger stricter conditions or require deeper review. The system supports decision-making by standardizing risk assessment across diverse applicants, "
-            "while also adapting to observed trends such as growing credit reliability in previously underserved groups.\n\n"
-            f"Business Risk Indicators: {json.dumps(analysis_data, default=str)}"
+            "You are a senior loan officer. Explain this credit score analysis in business terms using exactly 100 words. "
+            "Focus on operational impact, loan pricing, risk management, and portfolio implications. "
+            "Use terminology appropriate for banking executives and decision makers.\n\n"
+            f"Analysis Data: {json.dumps(analysis_data, default=str)}"
         )
 
     def _generate_customer_explanation(self, analysis_data: Dict[str, Any]) -> str:
         return (
-            "System Instruction: Customer-Focused Summary\n"
-            "Your score is based on how closely your financial behavior matches those of previous applicants who repaid successfully. "
-            "It looks at things like whether payments were made on time, how steady your income appears, how long you’ve lived at your current address, and your participation in savings groups or community loans. "
-            "This score doesn’t label you—it helps us know where we can support you better. If you didn’t score highly this time, it’s not permanent. There are ways forward.\n\n"
-            f"Behavioral Summary: {json.dumps(analysis_data, default=str)}"
+            "You are explaining to a loan applicant. Explain this credit score analysis in simple, supportive terms using exactly 100 words. "
+            "Focus on what the score means for them, how it was calculated, and that improvement is possible. "
+            "Use friendly, non-technical language that reassures and educates.\n\n"
+            f"Analysis Data: {json.dumps(analysis_data, default=str)}"
         )
 
     def _generate_risk_factors_explanation(self, analysis_data: Dict[str, Any]) -> str:
         return (
-            "System Instruction: Default Risk Explanation\n"
-            "Based on the applicant’s profile, the model identifies the likelihood they might default on a loan. The most influential risk factors include: "
-            "late payments, high dependency ratio, low disaster preparedness, unstable co-maker background, and lack of formal income records. "
-            "However, it also accounts for cultural practices—such as paluwagan participation, household leadership roles, and non-traditional sources of income—"
-            "which may offer stability not seen in formal systems.\n\n"
-            f"Risk Evaluation Summary: {json.dumps(analysis_data, default=str)}"
+            "You are a risk assessment expert. Explain the default risk factors in this analysis using exactly 100 words. "
+            "Focus on key risk indicators, cultural financial practices, and both positive and negative factors. "
+            "Use professional risk management terminology.\n\n"
+            f"Analysis Data: {json.dumps(analysis_data, default=str)}"
         )
 
     def _generate_recommendations(self, analysis_data: Dict[str, Any]) -> str:
         return (
-            "System Instruction: Actionable Guidance\n"
-            "To improve this score, the applicant may focus on: reducing late payments, strengthening documentation of income (even informal sources), "
-            "limiting frequent loan applications, and increasing financial visibility through community lending or cooperatives. "
-            "Applicants should also consider tracking paluwagan activity or disaster readiness, which can signal financial resilience in future assessments.\n\n"
-            f"Recommended Steps: {json.dumps(analysis_data, default=str)}"
+            "You are a financial advisor. Provide actionable recommendations to improve this credit score using exactly 100 words. "
+            "Focus on specific, practical steps the applicant can take. Include both formal and informal financial practices. "
+            "Use encouraging, advisory language with clear action items.\n\n"
+            f"Analysis Data: {json.dumps(analysis_data, default=str)}"
         )
 
     def _calculate_monthly_salary(self, salary_per_cutoff: float, frequency: str) -> float:

@@ -17,7 +17,6 @@ warnings.filterwarnings('ignore')
 
 # from fairnessmodel import FairnessAwareModel
 
-# Import SHAP for interpretability analysis
 try:
     import shap
     HAS_SHAP = True
@@ -27,7 +26,7 @@ except ImportError:
     print("SHAP library not available. Will skip SHAP analysis.")
 
 # Configuration
-RAW_DATA_PATH = '../data/raw/synthetic_training_data13.csv'
+RAW_DATA_PATH = '../data/raw/synthetic_training_data12.csv'
 MODEL_DIR = '../models'
 
 print("="*80)
@@ -349,7 +348,7 @@ balanced_pipeline = Pipeline([
     ('classifier', LogisticRegression(
         penalty='l2',
         class_weight='balanced',
-        random_state=42,
+        random_s3tate=42,
         max_iter=1000,
         solver='lbfgs'
     ))
