@@ -21,13 +21,6 @@ class LoanApplicationService:
     def __init__(self, 
                  prediction_service: PredictionService, 
                  recommendation_service: Optional[LoanRecommendationService] = None):
-        """
-        Initialize the loan application service with required services.
-        
-        Args:
-            prediction_service: The prediction service instance
-            recommendation_service: The loan recommendation service instance
-        """
         self.prediction_service = prediction_service
         self.ai_service = ai_service
         self.recommendation_service = recommendation_service
@@ -38,20 +31,6 @@ class LoanApplicationService:
         request_data: FullLoanApplicationRequest, 
         loan_officer_id: str
     ) -> Dict[str, Any]:
-        """
-        Create a new loan application record with prediction results.
-        
-        Args:
-            request_data: Complete loan application request data
-            loan_officer_id: ID of the loan officer handling the application
-            
-        Returns:
-            Dict containing the created loan application and prediction result
-            
-        Raises:
-            ValueError: If input validation fails
-            RuntimeError: If prediction or database operations fail
-        """
         try:
             logger.info(f"Creating loan application for loan officer: {loan_officer_id}")
             
@@ -102,15 +81,6 @@ class LoanApplicationService:
             raise RuntimeError(f"Failed to create loan application: {str(e)}")
         
     async def _generate_and_save_explanation(self, application: LoanApplication) -> Optional[AIExplanation]:
-        """
-        Generate and save AI explanation for the loan application.
-        
-        Args:
-            application: The loan application to generate explanation for
-            
-        Returns:
-            Optional[AIExplanation]: The generated explanation or None if failed
-        """
         if not self.ai_service:
             logger.warning("AIExplainabilityService is not available, skipping explanation generation")
             return None
@@ -141,15 +111,6 @@ class LoanApplicationService:
             return None
 
     async def get_loan_application(self, application_id: UUID) -> Optional[LoanApplication]:
-        """
-        Retrieve a loan application by its application_id UUID.
-        
-        Args:
-            application_id: UUID of the loan application
-            
-        Returns:
-            Optional[LoanApplication]: The loan application if found, None otherwise
-        """
         try:
             logger.info(f"Retrieving loan application with application_id: {application_id}")
             
@@ -173,17 +134,6 @@ class LoanApplicationService:
         limit: int = 100, 
         loan_officer_id: Optional[str] = None
     ) -> List[LoanApplication]:
-        """
-        Retrieve loan applications with optional filtering and pagination.
-        
-        Args:
-            skip: Number of records to skip
-            limit: Maximum number of records to return
-            loan_officer_id: Optional filter by loan officer ID
-            
-        Returns:
-            List[LoanApplication]: List of loan applications
-        """
         try:
             logger.info(f"Retrieving loan applications (skip: {skip}, limit: {limit}, officer: {loan_officer_id})")
             
@@ -208,16 +158,6 @@ class LoanApplicationService:
         application_id: UUID, 
         new_status: str
     ) -> Optional[LoanApplication]:
-        """
-        Update the status of a loan application.
-        
-        Args:
-            application_id: UUID of the loan application
-            new_status: New status to set
-            
-        Returns:
-            Optional[LoanApplication]: Updated application if found, None otherwise
-        """
         try:
             logger.info(f"Updating status for application {application_id} to: {new_status}")
             
@@ -243,15 +183,6 @@ class LoanApplicationService:
 
 
     async def delete_loan_application(self, application_id: UUID) -> bool:
-        """
-        Delete a loan application by its ID.
-        
-        Args:
-            application_id: UUID of the loan application to delete
-            
-        Returns:
-            bool: True if deleted successfully, False if not found
-        """
         try:
             logger.info(f"Deleting loan application with ID: {application_id}")
             
@@ -273,15 +204,6 @@ class LoanApplicationService:
         self, 
         application_id: UUID
     ) -> Optional[List[RecommendedProducts]]:
-        """
-        Regenerate loan recommendations for an existing application.
-        
-        Args:
-            application_id: UUID of the loan application
-            
-        Returns:
-            Optional[List[RecommendedProducts]]: Updated recommendations or None if failed
-        """
         try:
             logger.info(f"Regenerating loan recommendations for application: {application_id}")
             
@@ -313,12 +235,6 @@ class LoanApplicationService:
             return None
 
     async def get_service_status(self) -> Dict[str, Any]:
-        """
-        Get the current status of the loan application service.
-        
-        Returns:
-            Dict[str, Any]: Service status information
-        """
         try:
             # Check if prediction service is available
             prediction_service_status = "healthy" if self.prediction_service else "unavailable"
@@ -361,15 +277,6 @@ class LoanApplicationService:
             raise RuntimeError(f"Failed to get service status: {str(e)}")
 
     def _validate_loan_application_data(self, request_data: FullLoanApplicationRequest) -> None:
-        """
-        Validate loan application data before processing.
-        
-        Args:
-            request_data: The loan application request data
-            
-        Raises:
-            ValueError: If validation fails
-        """
         if not request_data.applicant_info.full_name.strip():
             raise ValueError("Applicant full name is required")
         
@@ -412,18 +319,6 @@ class LoanApplicationService:
             raise ValueError("Late payment count cannot be negative")
 
     async def _run_prediction(self, model_input_data) -> PredictionResult:
-        """
-        Run prediction using the prediction service.
-        
-        Args:
-            model_input_data: Model input data for prediction
-            
-        Returns:
-            PredictionResult: The prediction result
-            
-        Raises:
-            RuntimeError: If prediction fails
-        """
         try:
             logger.info("Running prediction for loan application")
             
@@ -460,12 +355,6 @@ class LoanApplicationService:
 
 
 def initialize_loan_application_service() -> Optional[LoanApplicationService]:
-    """
-    Initialize the loan application service.
-    
-    Returns:
-        Optional[LoanApplicationService]: The initialized service or None if failed
-    """
     try:
         logger.info("Initializing LoanApplicationService...")
         

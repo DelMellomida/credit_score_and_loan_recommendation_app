@@ -2221,3 +2221,53 @@ DEBUG: Raw Authorization header: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ
 DEBUG: Decoded token payload: {'sub': 'admin@example.com', 'exp': 1759806188}
 DEBUG: Extracted email from token: admin@example.com
 INFO:     172.19.0.1:50732 - "POST /loans/applications HTTP/1.1" 201 Created
+/usr/local/lib/python3.11/site-packages/pydantic/_internal/_config.py:321: UserWarning: Valid config keys have changed in V2:
+* 'orm_mode' has been renamed to 'from_attributes'
+  warnings.warn(message, UserWarning)
+/usr/local/lib/python3.11/site-packages/pydantic/_internal/_fields.py:149: UserWarning: Field "model_input_data" has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/pydantic/_internal/_config.py:321: UserWarning: Valid config keys have changed in V2:
+* 'schema_extra' has been renamed to 'json_schema_extra'
+  warnings.warn(message, UserWarning)
+INFO:app.services.prediction_service:Initializing PredictionService...
+INFO:app.services.prediction_service:Loading model...
+INFO:app.services.prediction_service:Attempting to load fairness-aware model...
+WARNING:app.services.prediction_service:Failed to load with custom unpickler: No module named 'fairlearn'
+WARNING:app.services.prediction_service:Failed to load fairness-aware model: No module named 'fairlearn'
+INFO:app.services.prediction_service:Will attempt to reconstruct from components...
+WARNING:app.services.prediction_service:Metadata indicates fairness model but components not found. Loading as standard model.
+WARNING:app.services.prediction_service:Failed to reconstruct fairness model: Fairness model components not found
+WARNING:app.services.prediction_service:Failed to reconstruct fairness model: Fairness model components not found
+INFO:app.services.prediction_service:Loading standard model...
+INFO:app.services.prediction_service:Standard model loaded successfully.
+INFO:app.services.prediction_service:Model validation successful.
+INFO:app.services.prediction_service:PredictionService initialized successfully.
+INFO:app.services.ai_service:Google AI SDK configured successfully.
+INFO:app.services.ai_service:AIExplainabilityService initialized successfully with model: gemini-1.5-flash-latest
+INFO:app.services.loan_recommendation_service:Initializing LoanRecommendationService...
+INFO:app.services.loan_recommendation_service:LoanRecommendationService initialized
+INFO:app.services.loan_recommendation_service:LoanRecommendationService initialized successfully
+INFO:app.services.loan_service:Initializing LoanApplicationService...
+INFO:app.services.loan_service:LoanApplicationService initialized
+INFO:app.services.loan_service:LoanApplicationService initialized successfully
+INFO:     Started server process [9]
+INFO:     Waiting for application startup.
+INFO:app.database.connection:Attempting to connect to MongoDB at: mongodb+srv://jhondelmellomida16:DwFWnj8vWJpTPWYs@cluster0.csk4w5v.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
+INFO:app.database.connection:Database name: credit-score-and-loan-recommendation
+INFO:app.database.connection:Creating MongoDB client...
+INFO:app.database.connection:Testing MongoDB connection...
+INFO:app.database.connection:Successfully connected to MongoDB!
+INFO:app.database.connection:Getting database instance...
+INFO:app.database.connection:Initializing Beanie with User model...
+INFO:app.database.connection:Beanie initialized successfully!
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+DEBUG: Loaded JWT_SECRET_KEY: cred...********..._key
+DEBUG: Login attempt for email: admin@example.com
+DEBUG: User found: admin@example.com
+DEBUG: Stored hash: $2b$12$YL12jnSm/s/s6...
+DEBUG: Input password: admi1n23
+DEBUG: Password verification result: False
+INFO:     172.19.0.1:44040 - "POST /auth/login HTTP/1.1" 401 Unauthorized

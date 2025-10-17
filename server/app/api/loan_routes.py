@@ -1,22 +1,22 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Query
+from fastapi import APIRouter, HTTPException, status, Depends, Query, UploadFile, File, Form
 from typing import Dict, Any, List, Optional
 import logging
+import json
 from uuid import UUID
-
 from app.services.loan_service import LoanApplicationService, loan_application_service
 from app.schemas.loan_schema import (
-    FullLoanApplicationRequest, 
-    AIExplanation, 
-    FullLoanApplicationResponse, 
-    ApplicantInfo, 
-    CoMakerInfo, 
-    LoanApplicationRequest, 
-    EmploymentSectorEnum, 
-    SalaryFrequencyEnum, 
-    HousingStatusEnum, 
-    YesNoEnum, 
-    ComakerRelationshipEnum, 
-    OtherIncomeSourceEnum, 
+    FullLoanApplicationRequest,
+    AIExplanation,
+    FullLoanApplicationResponse,
+    ApplicantInfo,
+    CoMakerInfo,
+    LoanApplicationRequest,
+    EmploymentSectorEnum,
+    SalaryFrequencyEnum,
+    HousingStatusEnum,
+    YesNoEnum,
+    ComakerRelationshipEnum,
+    OtherIncomeSourceEnum,
     DisasterPreparednessEnum,
     RecommendedProducts,
     PaluwaganParticipationEnum,
@@ -30,16 +30,13 @@ from app.database.models.loan_application_model import (
 )
 from app.core.auth_dependencies import get_current_user, get_current_active_user
 
+from app.workers.loan_application_worker import process_loan_application
+from app.schemas.document_schema import DocumentUploadRequest
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
 def get_loan_application_service() -> LoanApplicationService:
-    """
-    Dependency to get the loan application service instance.
-    
-    Raises:
-        HTTPException: If loan application service is not initialized
-    """
     if loan_application_service is None:
         logger.error("Loan application service is not initialized")
         raise HTTPException(
@@ -53,157 +50,68 @@ router = APIRouter(prefix="/loans", tags=["Loan Applications"])
 
 @router.post("/applications", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
 async def create_loan_application(
-    request_data: FullLoanApplicationRequest,
+    request_data: str = Form(...),
+    brgyCert: UploadFile = File(...),
+    eSignaturePersonal: UploadFile = File(...),
+    payslip: UploadFile = File(...),
+    companyId: UploadFile = File(...),
+    proofOfBilling: UploadFile = File(...),
+    eSignatureCoMaker: UploadFile = File(...),
     current_user: Dict = Depends(get_current_active_user),
     service: LoanApplicationService = Depends(get_loan_application_service)
 ):
-    """
-    Creates a new loan application, runs the assessment, 
-    and saves the complete record to the database.
-    Returns the application details along with prediction results.
-    
-    Requires authentication - the loan officer ID will be taken from the authenticated user.
-    """
     try:
-        logger.info(f"Starting loan application creation process for user: {current_user['email']}")
-        
-        # Get loan officer ID from authenticated user
-        loan_officer_id = current_user["id"]  # Use the authenticated user's ID
-        
-        logger.info("Converting request data to database models")
-        
-        # Convert request schemas to database model schemas
         try:
-            applicant_info = DbApplicantInfo(**request_data.applicant_info.model_dump())
-            logger.info("ApplicantInfo created successfully")
-        except Exception as e:
-            logger.error(f"Error creating ApplicantInfo: {e}")
-            raise ValueError(f"Error in applicant info: {e}")
-        
-        try:
-            comaker_info = DbCoMakerInfo(
-                full_name=request_data.comaker_info.full_name,
-                contact_number=request_data.comaker_info.contact_number
+            data_dict = json.loads(request_data)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid JSON format: {str(e)}"
             )
-            logger.info("CoMakerInfo created successfully")
-        except Exception as e:
-            logger.error(f"Error creating CoMakerInfo: {e}")
-            raise ValueError(f"Error in comaker info: {e}")
-        
-        try:
-            model_input_data = ModelInputData(**request_data.model_input_data.model_dump())
-            logger.info("ModelInputData created successfully")
-        except Exception as e:
-            logger.error(f"Error creating ModelInputData: {e}")
-            raise ValueError(f"Error in model input data: {e}")
-        
-        # Create the loan application
-        try:
-            logger.info("Creating LoanApplication document")
-            loan_application = LoanApplication(
-                loan_officer_id=loan_officer_id,
-                applicant_info=applicant_info,
-                comaker_info=comaker_info,
-                model_input_data=model_input_data
-            )
-            logger.info("LoanApplication document created successfully")
-        except Exception as e:
-            logger.error(f"Error creating LoanApplication document: {e}")
-            raise ValueError(f"Error creating loan application: {e}")
-        
-        # Run prediction using the service
-        try:
-            logger.info("Running prediction for loan application")
-            prediction_result = await service._run_prediction(model_input_data)
             
-            # Add prediction result to the loan application
-            loan_application.prediction_result = prediction_result
-            logger.info("Prediction completed and added to loan application")
-        except Exception as e:
-            logger.error(f"Error during prediction: {e}")
-            raise RuntimeError(f"Prediction failed: {e}")
-        
-        # Get loan recommendations using the recommendation service
+        # Ensure job field is set to a valid enum value
+        if "applicant_info" in data_dict and "job" in data_dict["applicant_info"]:
+            if data_dict["applicant_info"]["job"] == "Government Employee":
+                data_dict["applicant_info"]["job"] = "Others"
+                
+        # Ensure Paluwagan_Participation is correctly spelled
+        if "model_input_data" in data_dict and "Paluwagan_Participation" in data_dict["model_input_data"]:
+            if data_dict["model_input_data"]["Paluwagan_Participation"] == "Rarel":
+                data_dict["model_input_data"]["Paluwagan_Participation"] = "Rarely"
+
+        # Convert the dict to a Pydantic model
         try:
-            recommended_products = []
-            if service.recommendation_service:
-                recommended_products = service.recommendation_service.get_loan_recommendations(
-                    applicant_info=request_data.applicant_info,
-                    model_input_data=request_data.model_input_data.model_dump()
-                )
-                logger.info("Recommended products are created")
-            else:
-                logger.warning("Recommendation service not available")
+            parsed_request_data = FullLoanApplicationRequest(**data_dict)
         except Exception as e:
-            logger.error(f"Error during recommending products: {e}")
-            raise ValueError(f"Recommending products failed: {e}")
-        
-        try:
-            ai_explanation = await service._generate_and_save_explanation(loan_application)
-            logger.info("AI explanation generated and saved successfully")
-        except Exception as e:
-            logger.error(f"Error generating AI explanation: {e}")
-            print(e)
-            raise RuntimeError(f"AI explanation generation failed: {e}")
-        
-        # Save to database
-        try:
-            logger.info("Saving loan application to database")
-            await loan_application.save()
-            logger.info("Loan application saved to database successfully")
-        except Exception as e:
-            logger.error(f"Error saving to database: {e}")
-            raise RuntimeError(f"Database error: {e}")
-        
-        logger.info(f"Loan application created successfully with ID: {loan_application.application_id}")
-        
-        return {
-            "message": "Loan application created successfully",
-            "application_id": str(loan_application.application_id),
-            "timestamp": loan_application.timestamp.isoformat(),
-            "status": "created",
-            "prediction_result": {
-                "final_credit_score": prediction_result.final_credit_score,
-                "default": prediction_result.default,
-                "probability_of_default": prediction_result.probability_of_default,
-                "status": prediction_result.status
-            },
-            "recommended_products": recommended_products,
-            "applicant_info": {
-                "full_name": loan_application.applicant_info.full_name,
-                "contact_number": loan_application.applicant_info.contact_number,
-                "address": loan_application.applicant_info.address,
-                "salary": loan_application.applicant_info.salary,
-                "job": loan_application.applicant_info.job
-            },
-            "loan_officer_id": loan_application.loan_officer_id,
-            "created_by": {
-                "email": current_user["email"],
-                "full_name": current_user["full_name"]
-            },
-            "ai_explanation": ai_explanation
+            logger.error(f"Validation error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid request data format: {str(e)}"
+            )
+
+        document_files = {
+            "brgy_cert": brgyCert,
+            "e_signature_personal": eSignaturePersonal,
+            "payslip": payslip,
+            "company_id": companyId,
+            "proof_of_billing": proofOfBilling,
+            "e_signature_comaker": eSignatureCoMaker
         }
         
-    except ValueError as e:
-        logger.error(f"Validation error during application creation: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail=f"Invalid loan application data: {str(e)}"
+        return await process_loan_application(
+            parsed_request_data,
+            document_files,
+            current_user,
+            service
         )
-    except RuntimeError as e:
-        logger.error(f"Runtime error during application creation: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Unexpected error during application creation: {e}")
-        logger.error(f"Error type: {type(e).__name__}")
-        import traceback
-        logger.error(f"Full traceback: {traceback.format_exc()}")
+        logger.error(f"Error in loan application creation: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error: {str(e)}"
+            detail=f"An error occurred while processing the application: {str(e)}"
         )
 
 @router.post("/applications/demo", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)

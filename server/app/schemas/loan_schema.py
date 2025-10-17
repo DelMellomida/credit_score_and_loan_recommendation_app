@@ -101,7 +101,7 @@ class ApplicantInfo(BaseModel):
     contact_number: str
     address: str
     salary: str
-    job: str
+    job: JobEnum
 
 class CoMakerInfo(BaseModel):
     """Schema for the co-maker's personal info."""
