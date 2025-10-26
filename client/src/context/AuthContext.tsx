@@ -46,17 +46,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setError(null);
     try {
       const res = await apiLogin(username, password);
-      // Try to get the token from common property names
-      const token = res.access_token || res.token || res.jwt;
-      if (!token) {
-        throw new Error('No token returned from server');
+      console.log('Auth response:', res);
+      
+      // Make sure we have a token
+      if (!res.access_token) {
+        throw new Error('No access token returned from server');
       }
+
+      // Store just the raw token value
+      const token = res.access_token;
+      console.log('Setting auth token:', '<token>');
+      
       setUser({
-        email: res.email || username,
-        full_name: res.full_name || '',
-        token,
+        email: username,
+        full_name: res.full_name || username,
+        token: token, // Store just the raw token value
       });
     } catch (err: any) {
+      console.error('Login error:', err);
       setError(err.message || 'Login failed');
       setUser(null);
     } finally {

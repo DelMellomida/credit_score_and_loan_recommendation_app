@@ -7,6 +7,8 @@ import uuid
 class ApplicationDocument(Document):
     document_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     application_id: str
+    profile_photo_url: Optional[str] = None
+    valid_id_url: Optional[str] = None
     brgy_cert_url: Optional[str] = None
     e_signature_personal_url: Optional[str] = None
     payslip_url: Optional[str] = None

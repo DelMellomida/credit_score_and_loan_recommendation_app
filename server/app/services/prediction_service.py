@@ -2,7 +2,6 @@ import pickle
 import os
 import pandas as pd
 import numpy as np
-from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, List
 import logging
 from app.schemas.loan_schema import LoanApplicationRequest

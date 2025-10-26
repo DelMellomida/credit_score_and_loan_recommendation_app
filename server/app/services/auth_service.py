@@ -2,7 +2,6 @@ from fastapi import HTTPException, status
 from app.database.models import User
 from app.schemas import UserCreate
 from app.core import hash_password, verify_password, create_access_token, is_valid_password
-from app.core.config import settings
 from typing import Dict, Optional
 from datetime import datetime
 

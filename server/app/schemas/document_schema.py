@@ -4,12 +4,13 @@ from datetime import datetime
 
 from fastapi import UploadFile, File
 from typing import Optional
-
-
 from fastapi import Depends
 
 class DocumentUploadRequest:
     def __init__(
+        self,
+        profilePhoto: Optional[UploadFile] = File(None),
+        validId: Optional[UploadFile] = File(None),
         brgyCert: Optional[UploadFile] = File(None),
         eSignaturePersonal: Optional[UploadFile] = File(None),
         payslip: Optional[UploadFile] = File(None),
@@ -18,6 +19,8 @@ class DocumentUploadRequest:
         eSignatureCoMaker: Optional[UploadFile] = File(None),
     ):
         self._fields = {
+            "profile_photo": profilePhoto,
+            "valid_id": validId,
             "brgy_cert": brgyCert,
             "e_signature_personal": eSignaturePersonal,
             "payslip": payslip,
@@ -32,6 +35,8 @@ class DocumentUploadRequest:
 class DocumentResponse(BaseModel):
     document_id: str
     application_id: str
+    profile_photo_url: Optional[str]
+    valid_id_url: Optional[str]
     brgy_cert_url: Optional[str]
     e_signature_personal_url: Optional[str]
     payslip_url: Optional[str]

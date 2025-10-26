@@ -1,16 +1,18 @@
-"use client";
-
 import React, { useState } from 'react';
-import { useAuth } from '../context/AuthContext';
-import { User, LogOut } from 'lucide-react';
+import { User, LogOut, ClipboardList, FileText } from 'lucide-react';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { useAuth } from '../context/AuthContext';
 
+interface HeaderProps {
+  currentView: 'loan-process' | 'applicants-list' | 'applicant-overview';
+  onToggleView: () => void;
+}
 
-export function Header() {
+export function Header({ currentView, onToggleView }: HeaderProps) {
   const [isOpen, setIsOpen] = useState(false);
   const { logout, user } = useAuth();
-
+  
   const currentDateTime = new Date().toLocaleString('en-US', {
     year: 'numeric',
     month: 'long',
@@ -25,11 +27,20 @@ export function Header() {
     setIsOpen(false);
   };
 
+  const handleToggleView = () => {
+    onToggleView();
+    setIsOpen(false);
+  };
+
+  const isOnLoanProcess = currentView === 'loan-process';
+  const buttonText = isOnLoanProcess ? 'Applicants List' : 'Loan Process';
+  const ButtonIcon = isOnLoanProcess ? ClipboardList : FileText;
+
   return (
     <header className="bg-red-600 text-white px-6 py-4 shadow-lg">
-      <div className="flex justify-between items-center max-w-9xl mx-auto">
+      <div className="flex justify-between items-center max-w-7xl mx-auto">
         <div className="flex items-center">
-          <h1 className="text-2xl font-medium">Best Loan</h1>
+          <h1 className="text-xl font-medium">Best Loan</h1>
         </div>
         
         <div className="flex items-center">
@@ -38,7 +49,7 @@ export function Header() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="text-white hover:bg-red-700 p-2"
+                className="text-white hover:bg-red-700 p-2 cursor-pointer"
               >
                 <User className="h-6 w-6" />
               </Button>
@@ -51,10 +62,17 @@ export function Header() {
                 </div>
                 <hr />
                 <Button
+                  onClick={handleToggleView}
+                  variant="outline"
+                  className="w-full flex items-center gap-2 text-blue-600 border-blue-600 hover:bg-blue-50 cursor-pointer"
+                >
+                  <ButtonIcon className="h-4 w-4" />
+                  {buttonText}
+                </Button>
+                <Button
                   onClick={handleLogout}
                   variant="outline"
-                  className="w-full flex items-center gap-2 text-red-600 border-red-600 hover:bg-red-50"
-                  disabled={!user}
+                  className="w-full flex items-center gap-2 text-red-600 border-red-600 hover:bg-red-50 cursor-pointer"
                 >
                   <LogOut className="h-4 w-4" />
                   Logout

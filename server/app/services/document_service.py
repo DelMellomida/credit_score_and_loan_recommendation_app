@@ -184,6 +184,8 @@ class DocumentService:
                 "company_id_url": file_urls.get("company_id_url"),
                 "proof_of_billing_url": file_urls.get("proof_of_billing_url"),
                 "e_signature_comaker_url": file_urls.get("e_signature_comaker_url"),
+                "profile_photo_url": file_urls.get("profile_photo_url"),
+                "valid_id_url": file_urls.get("valid_id_url"),
                 "file_metadata": file_metadata,
                 "created_by": user_email,
                 "updated_by": user_email,
@@ -260,9 +262,16 @@ class DocumentService:
     async def get_documents_by_application_id(self, application_id: str) -> Optional[ApplicationDocument]:
         doc = await ApplicationDocument.find_one(ApplicationDocument.application_id == application_id)
         if not doc:
-            raise HTTPException(status_code=404, detail="Document not found")
+            # Return empty document with no URLs instead of throwing 404
+            return ApplicationDocument(
+                document_id=str(uuid.uuid4()),
+                application_id=application_id,
+                created_by="system",
+                updated_by="system"
+            )
+            
         # Refresh signed URLs
-        for field in ["brgy_cert_url", "e_signature_personal_url", "payslip_url", "company_id_url", "proof_of_billing_url", "e_signature_comaker_url"]:
+        for field in ["brgy_cert_url", "e_signature_personal_url", "payslip_url", "company_id_url", "proof_of_billing_url", "e_signature_comaker_url", "profile_photo_url", "valid_id_url"]:
             url = getattr(doc, field)
             if url:
                 # Extract path from URL if it's a full URL
@@ -279,7 +288,7 @@ class DocumentService:
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
         # Refresh signed URLs
-        for field in ["brgy_cert_url", "e_signature_personal_url", "payslip_url", "company_id_url", "proof_of_billing_url", "e_signature_comaker_url"]:
+        for field in ["brgy_cert_url", "e_signature_personal_url", "payslip_url", "company_id_url", "proof_of_billing_url", "e_signature_comaker_url", "profile_photo_url", "valid_id_url"]:
             url = getattr(doc, field)
             if url:
                 try:

@@ -55,22 +55,39 @@ async def process_loan_application(
         
         # Run prediction
         prediction_result = await service._run_prediction(model_input_data)
-        loan_application.prediction_result = prediction_result
         
         # Get recommendations
-        recommended_products = []
         if service.recommendation_service:
-            recommended_products = service.recommendation_service.get_loan_recommendations(
-                applicant_info=request_data.applicant_info,
-                model_input_data=request_data.model_input_data.model_dump()
-            )
+            logger.info("Attempting to get loan recommendations")
+            try:
+                logger.debug(f"Applicant info for recommendations: {applicant_info.model_dump()}")
+                logger.debug(f"Model input data for recommendations: {model_input_data.model_dump()}")
+                
+                recommended_products = service.recommendation_service.get_loan_recommendations(
+                    applicant_info=applicant_info,  # Use the converted model
+                    model_input_data=model_input_data.model_dump()
+                )
+                
+                # IMPORTANT: Update the prediction_result with recommendations
+                prediction_result.loan_recommendation = recommended_products
+                
+                logger.info(f"Generated {len(recommended_products)} loan recommendations")
+                if not recommended_products:
+                    logger.warning("No loan recommendations were generated")
+            except Exception as rec_error:
+                logger.error(f"Error generating loan recommendations: {rec_error}", exc_info=True)
+                # Don't raise the error, just log it as recommendations are optional
+                prediction_result.loan_recommendation = []
         
         # Generate AI explanation
         ai_explanation = await service._generate_and_save_explanation(loan_application)
         
+        # Update the prediction result in loan application before saving
+        loan_application.prediction_result = prediction_result
+        
         # Save loan application
         await loan_application.save()
-        logger.info(f"Loan application created successfully with ID: {loan_application.application_id}")
+        logger.info(f"Loan application created successfully with ID: {loan_application.application_id}, with {len(prediction_result.loan_recommendation)} recommendations")
         
         # Handle document upload - THIS IS THE CRITICAL PART
         document_result = None

@@ -2,7 +2,6 @@ import logging
 import json
 from typing import Dict, Any, Optional
 
-from fastapi import HTTPException, status
 import google.generativeai as genai
 from google.generativeai.types import GenerationConfig
 

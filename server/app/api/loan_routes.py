@@ -20,7 +20,8 @@ from app.schemas.loan_schema import (
     DisasterPreparednessEnum,
     RecommendedProducts,
     PaluwaganParticipationEnum,
-    CommunityRoleEnum
+    CommunityRoleEnum,
+    ApplicationStatusEnum
 )
 from app.database.models.loan_application_model import (
     LoanApplication, 
@@ -51,6 +52,8 @@ router = APIRouter(prefix="/loans", tags=["Loan Applications"])
 @router.post("/applications", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
 async def create_loan_application(
     request_data: str = Form(...),
+    profilePhoto: UploadFile = File(...),
+    validId: UploadFile = File(...),
     brgyCert: UploadFile = File(...),
     eSignaturePersonal: UploadFile = File(...),
     payslip: UploadFile = File(...),
@@ -91,6 +94,8 @@ async def create_loan_application(
             )
 
         document_files = {
+            "profile_photo": profilePhoto,
+            "valid_id": validId,
             "brgy_cert": brgyCert,
             "e_signature_personal": eSignaturePersonal,
             "payslip": payslip,
@@ -114,207 +119,271 @@ async def create_loan_application(
             detail=f"An error occurred while processing the application: {str(e)}"
         )
 
-@router.post("/applications/demo", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
-async def create_demo_loan_application(
-    # Applicant Info
-    applicant_name: str,
-    contact_number: str,
-    address: str,
-    salary: str,
-    job: str,
+# @router.post("/applications/demo", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
+# async def create_demo_loan_application(
+#     # Applicant Info
+#     applicant_name: str,
+#     contact_number: str,
+#     address: str,
+#     salary: str,
+#     job: str,
     
-    # Co-maker Info
-    comaker_name: str,
-    comaker_contact: str,
+#     # Co-maker Info
+#     comaker_name: str,
+#     comaker_contact: str,
     
-    # Key Model Inputs
-    employment_sector: EmploymentSectorEnum,
-    employment_tenure_months: int,
-    net_salary_per_cutoff: float,
-    salary_frequency: SalaryFrequencyEnum,
-    housing_status: HousingStatusEnum,
-    years_at_current_address: float,
-    household_head: YesNoEnum,
-    number_of_dependents: int,
-    comaker_relationship: ComakerRelationshipEnum,
-    comaker_employment_tenure_months: int,
-    comaker_net_salary_per_cutoff: float,
-    has_community_role: CommunityRoleEnum,
-    paluwagan_participation: PaluwaganParticipationEnum,
-    other_income_source: OtherIncomeSourceEnum,
-    disaster_preparedness: DisasterPreparednessEnum,
-    is_renewing_client: int = 0,
-    grace_period_usage_rate: float = 0.0,
-    late_payment_count: int = 0,
-    had_special_consideration: int = 0,
+#     # Key Model Inputs
+#     employment_sector: EmploymentSectorEnum,
+#     employment_tenure_months: int,
+#     net_salary_per_cutoff: float,
+#     salary_frequency: SalaryFrequencyEnum,
+#     housing_status: HousingStatusEnum,
+#     years_at_current_address: float,
+#     household_head: YesNoEnum,
+#     number_of_dependents: int,
+#     comaker_relationship: ComakerRelationshipEnum,
+#     comaker_employment_tenure_months: int,
+#     comaker_net_salary_per_cutoff: float,
+#     has_community_role: CommunityRoleEnum,
+#     paluwagan_participation: PaluwaganParticipationEnum,
+#     other_income_source: OtherIncomeSourceEnum,
+#     disaster_preparedness: DisasterPreparednessEnum,
+#     is_renewing_client: int = 0,
+#     grace_period_usage_rate: float = 0.0,
+#     late_payment_count: int = 0,
+#     had_special_consideration: int = 0,
     
-    current_user: Dict = Depends(get_current_active_user),
+#     current_user: Dict = Depends(get_current_active_user),
+#     service: LoanApplicationService = Depends(get_loan_application_service)
+# ):
+#     """
+#     Demo endpoint for loan application creation - all fields as individual parameters.
+#     This will show each field separately in Swagger UI for easy testing and demo purposes.
+#     Perfect for presentations where you want to fill out fields one by one.
+#     """
+#     try:
+#         logger.info(f"Starting demo loan application creation for user: {current_user['email']}")
+        
+#         # Get loan officer ID from authenticated user
+#         loan_officer_id = current_user["id"]
+        
+#         # Reconstruct the nested models from individual parameters
+#         applicant_info = ApplicantInfo(
+#             full_name=applicant_name,
+#             contact_number=contact_number,
+#             address=address,
+#             salary=salary,
+#             job=job
+#         )
+        
+#         comaker_info = CoMakerInfo(
+#             full_name=comaker_name,
+#             contact_number=comaker_contact
+#         )
+        
+#         model_input_data = LoanApplicationRequest(
+#             Employment_Sector=employment_sector,
+#             Employment_Tenure_Months=employment_tenure_months,
+#             Net_Salary_Per_Cutoff=net_salary_per_cutoff,
+#             Salary_Frequency=salary_frequency,
+#             Housing_Status=housing_status,
+#             Years_at_Current_Address=years_at_current_address,
+#             Household_Head=household_head,
+#             Number_of_Dependents=number_of_dependents,
+#             Comaker_Relationship=comaker_relationship,
+#             Comaker_Employment_Tenure_Months=comaker_employment_tenure_months,
+#             Comaker_Net_Salary_Per_Cutoff=comaker_net_salary_per_cutoff,
+#             Has_Community_Role=has_community_role,
+#             Paluwagan_Participation=paluwagan_participation,
+#             Other_Income_Source=other_income_source,
+#             Disaster_Preparedness=disaster_preparedness,
+#             Is_Renewing_Client=is_renewing_client,
+#             Grace_Period_Usage_Rate=grace_period_usage_rate,
+#             Late_Payment_Count=late_payment_count,
+#             Had_Special_Consideration=had_special_consideration
+#         )
+        
+#         # Create full request object
+#         full_request = FullLoanApplicationRequest(
+#             applicant_info=applicant_info,
+#             comaker_info=comaker_info,
+#             model_input_data=model_input_data
+#         )
+        
+#         # Convert to database models
+#         try:
+#             db_applicant_info = DbApplicantInfo(**applicant_info.model_dump())
+#             db_comaker_info = DbCoMakerInfo(
+#                 full_name=comaker_info.full_name,
+#                 contact_number=comaker_info.contact_number
+#             )
+#             db_model_input_data = ModelInputData(**model_input_data.model_dump())
+#         except Exception as e:
+#             logger.error(f"Error converting to database models: {e}")
+#             raise ValueError(f"Error in data conversion: {e}")
+        
+#         # Create the loan application
+#         try:
+#             loan_application = LoanApplication(
+#                 loan_officer_id=loan_officer_id,
+#                 applicant_info=db_applicant_info,
+#                 comaker_info=db_comaker_info,
+#                 model_input_data=db_model_input_data
+#             )
+#         except Exception as e:
+#             logger.error(f"Error creating loan application: {e}")
+#             raise ValueError(f"Error creating loan application: {e}")
+        
+#         # Run prediction using the service
+#         try:
+#             logger.info("Running prediction for demo loan application")
+#             prediction_result = await service._run_prediction(db_model_input_data)
+#             loan_application.prediction_result = prediction_result
+#         except Exception as e:
+#             logger.error(f"Error during prediction: {e}")
+#             raise RuntimeError(f"Prediction failed: {e}")
+        
+#         # Get loan recommendations using the recommendation service
+#         try:
+#             recommended_products = []
+#             if service.recommendation_service:
+#                 recommended_products = service.recommendation_service.get_loan_recommendations(
+#                     applicant_info=applicant_info,
+#                     model_input_data=model_input_data.model_dump()
+#                 )
+#                 logger.info("Recommended products are created")
+#             else:
+#                 logger.warning("Recommendation service not available")
+#         except Exception as e:
+#             logger.error(f"Error during recommending products: {e}")
+#             raise ValueError(f"Recommending products failed: {e}")
+        
+#         try:
+#             ai_explanation = await service._generate_and_save_explanation(loan_application)
+#         except Exception as e:
+#             logger.error(f"Error generating AI explanation: {e}")
+#             raise RuntimeError(f"AI explanation generation failed: {e}")
+        
+#         # Save to database
+#         try:
+#             await loan_application.save()
+#         except Exception as e:
+#             logger.error(f"Error saving to database: {e}")
+#             raise RuntimeError(f"Database error: {e}")
+        
+#         logger.info(f"Demo loan application created successfully with ID: {loan_application.application_id}")
+        
+#         return {
+#             "message": "Demo loan application created successfully",
+#             "application_id": str(loan_application.application_id),
+#             "timestamp": loan_application.timestamp.isoformat(),
+#             "status": "created",
+#             "demo_mode": True,
+#             "prediction_result": {
+#                 "final_credit_score": prediction_result.final_credit_score,
+#                 "default": prediction_result.default,
+#                 "probability_of_default": prediction_result.probability_of_default,
+#                 "status": prediction_result.status
+#             },
+#             "recommended_products": recommended_products,
+#             "applicant_info": {
+#                 "full_name": applicant_info.full_name,
+#                 "contact_number": applicant_info.contact_number,
+#                 "address": applicant_info.address,
+#                 "salary": applicant_info.salary,
+#                 "job": applicant_info.job
+#             },
+#             "loan_officer_id": loan_application.loan_officer_id,
+#             "created_by": {
+#                 "email": current_user["email"],
+#                 "full_name": current_user["full_name"]
+#             },
+#             "ai_explanation": ai_explanation
+#         }
+        
+#     except ValueError as e:
+#         logger.error(f"Validation error during demo application creation: {e}")
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail=f"Invalid demo application data: {str(e)}"
+#         )
+#     except RuntimeError as e:
+#         logger.error(f"Runtime error during demo application creation: {e}")
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=str(e)
+#         )
+#     except Exception as e:
+#         logger.error(f"Unexpected error during demo application creation: {e}")
+#         import traceback
+#         logger.error(f"Full traceback: {traceback.format_exc()}")
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"Unexpected demo error: {str(e)}"
+#         )
+
+@router.get("/applications/id/{mongo_id}", response_model=Dict[str, Any])
+async def get_loan_application_by_id(
+    mongo_id: str,
+    include_ai_explanation: bool = Query(default=True, description="Include AI explanation in response"),
+    current_user: Dict = Depends(get_current_user),
     service: LoanApplicationService = Depends(get_loan_application_service)
 ):
     """
-    Demo endpoint for loan application creation - all fields as individual parameters.
-    This will show each field separately in Swagger UI for easy testing and demo purposes.
-    Perfect for presentations where you want to fill out fields one by one.
+    Get loan application by MongoDB _id
     """
     try:
-        logger.info(f"Starting demo loan application creation for user: {current_user['email']}")
-        
-        # Get loan officer ID from authenticated user
-        loan_officer_id = current_user["id"]
-        
-        # Reconstruct the nested models from individual parameters
-        applicant_info = ApplicantInfo(
-            full_name=applicant_name,
-            contact_number=contact_number,
-            address=address,
-            salary=salary,
-            job=job
-        )
-        
-        comaker_info = CoMakerInfo(
-            full_name=comaker_name,
-            contact_number=comaker_contact
-        )
-        
-        model_input_data = LoanApplicationRequest(
-            Employment_Sector=employment_sector,
-            Employment_Tenure_Months=employment_tenure_months,
-            Net_Salary_Per_Cutoff=net_salary_per_cutoff,
-            Salary_Frequency=salary_frequency,
-            Housing_Status=housing_status,
-            Years_at_Current_Address=years_at_current_address,
-            Household_Head=household_head,
-            Number_of_Dependents=number_of_dependents,
-            Comaker_Relationship=comaker_relationship,
-            Comaker_Employment_Tenure_Months=comaker_employment_tenure_months,
-            Comaker_Net_Salary_Per_Cutoff=comaker_net_salary_per_cutoff,
-            Has_Community_Role=has_community_role,
-            Paluwagan_Participation=paluwagan_participation,
-            Other_Income_Source=other_income_source,
-            Disaster_Preparedness=disaster_preparedness,
-            Is_Renewing_Client=is_renewing_client,
-            Grace_Period_Usage_Rate=grace_period_usage_rate,
-            Late_Payment_Count=late_payment_count,
-            Had_Special_Consideration=had_special_consideration
-        )
-        
-        # Create full request object
-        full_request = FullLoanApplicationRequest(
-            applicant_info=applicant_info,
-            comaker_info=comaker_info,
-            model_input_data=model_input_data
-        )
-        
-        # Convert to database models
-        try:
-            db_applicant_info = DbApplicantInfo(**applicant_info.model_dump())
-            db_comaker_info = DbCoMakerInfo(
-                full_name=comaker_info.full_name,
-                contact_number=comaker_info.contact_number
-            )
-            db_model_input_data = ModelInputData(**model_input_data.model_dump())
-        except Exception as e:
-            logger.error(f"Error converting to database models: {e}")
-            raise ValueError(f"Error in data conversion: {e}")
-        
-        # Create the loan application
-        try:
-            loan_application = LoanApplication(
-                loan_officer_id=loan_officer_id,
-                applicant_info=db_applicant_info,
-                comaker_info=db_comaker_info,
-                model_input_data=db_model_input_data
-            )
-        except Exception as e:
-            logger.error(f"Error creating loan application: {e}")
-            raise ValueError(f"Error creating loan application: {e}")
-        
-        # Run prediction using the service
-        try:
-            logger.info("Running prediction for demo loan application")
-            prediction_result = await service._run_prediction(db_model_input_data)
-            loan_application.prediction_result = prediction_result
-        except Exception as e:
-            logger.error(f"Error during prediction: {e}")
-            raise RuntimeError(f"Prediction failed: {e}")
-        
-        # Get loan recommendations using the recommendation service
-        try:
-            recommended_products = []
-            if service.recommendation_service:
-                recommended_products = service.recommendation_service.get_loan_recommendations(
-                    applicant_info=applicant_info,
-                    model_input_data=model_input_data.model_dump()
-                )
-                logger.info("Recommended products are created")
-            else:
-                logger.warning("Recommendation service not available")
-        except Exception as e:
-            logger.error(f"Error during recommending products: {e}")
-            raise ValueError(f"Recommending products failed: {e}")
-        
-        try:
-            ai_explanation = await service._generate_and_save_explanation(loan_application)
-        except Exception as e:
-            logger.error(f"Error generating AI explanation: {e}")
-            raise RuntimeError(f"AI explanation generation failed: {e}")
-        
-        # Save to database
-        try:
-            await loan_application.save()
-        except Exception as e:
-            logger.error(f"Error saving to database: {e}")
-            raise RuntimeError(f"Database error: {e}")
-        
-        logger.info(f"Demo loan application created successfully with ID: {loan_application.application_id}")
-        
-        return {
-            "message": "Demo loan application created successfully",
-            "application_id": str(loan_application.application_id),
+        from bson import ObjectId
+        loan_application = await LoanApplication.find_one({"_id": ObjectId(mongo_id)})
+        if not loan_application:
+            raise HTTPException(status_code=404, detail="Loan application not found")
+            
+        response = {
+            "_id": {"$oid": str(loan_application.id)},
+            "application_id": loan_application.application_id,
             "timestamp": loan_application.timestamp.isoformat(),
-            "status": "created",
-            "demo_mode": True,
-            "prediction_result": {
-                "final_credit_score": prediction_result.final_credit_score,
-                "default": prediction_result.default,
-                "probability_of_default": prediction_result.probability_of_default,
-                "status": prediction_result.status
-            },
-            "recommended_products": recommended_products,
-            "applicant_info": {
-                "full_name": applicant_info.full_name,
-                "contact_number": applicant_info.contact_number,
-                "address": applicant_info.address,
-                "salary": applicant_info.salary,
-                "job": applicant_info.job
-            },
+            "status": loan_application.status,
+            "applicant_info": loan_application.applicant_info.model_dump(),
+            "comaker_info": loan_application.comaker_info.model_dump(),
+            "model_input_data": loan_application.model_input_data.model_dump(),
             "loan_officer_id": loan_application.loan_officer_id,
-            "created_by": {
-                "email": current_user["email"],
-                "full_name": current_user["full_name"]
-            },
-            "ai_explanation": ai_explanation
         }
         
-    except ValueError as e:
-        logger.error(f"Validation error during demo application creation: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid demo application data: {str(e)}"
+        # Add prediction result if available
+        if loan_application.prediction_result:
+            response["prediction_result"] = loan_application.prediction_result.model_dump()
+            
+        # Add AI explanation if requested and available
+        if include_ai_explanation and loan_application.ai_explanation:
+            response["ai_explanation"] = loan_application.ai_explanation
+            
+        # Get and add documents if available
+        from app.database.models.document_model import ApplicationDocument
+        documents = await ApplicationDocument.find_one(
+            ApplicationDocument.application_id == str(loan_application.application_id)
         )
-    except RuntimeError as e:
-        logger.error(f"Runtime error during demo application creation: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
+        if documents:
+            response["documents"] = {
+                "profile_photo_url": documents.profile_photo_url,
+                "valid_id_url": documents.valid_id_url,
+                "brgy_cert_url": documents.brgy_cert_url,
+                "e_signature_personal_url": documents.e_signature_personal_url,
+                "payslip_url": documents.payslip_url,
+                "company_id_url": documents.company_id_url,
+                "proof_of_billing_url": documents.proof_of_billing_url,
+                "e_signature_comaker_url": documents.e_signature_comaker_url,
+                "file_metadata": documents.file_metadata
+            }
+        
+        return response
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Unexpected error during demo application creation: {e}")
-        import traceback
-        logger.error(f"Full traceback: {traceback.format_exc()}")
+        logger.error(f"Error retrieving loan application by MongoDB id {mongo_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected demo error: {str(e)}"
+            detail=f"Error retrieving loan application: {str(e)}"
         )
 
 @router.get("/applications/{application_id}", response_model=Dict[str, Any])
@@ -329,98 +398,144 @@ async def get_loan_application(
     Only accessible to authenticated users.
     """
     try:
-        application = await service.get_loan_application(application_id)
+        loan_application = await service.get_loan_application(application_id)
+        if not loan_application:
+            raise HTTPException(status_code=404, detail="Loan application not found")
+            
+        # Get associated documents
+        from app.database.models.document_model import ApplicationDocument
+        documents = await ApplicationDocument.find_one(
+            ApplicationDocument.application_id == str(application_id)
+        )
+        
+        # Create the base response
+        response = {
+            "_id": {"$oid": str(loan_application.id)},
+            "application_id": str(loan_application.application_id),
+            "timestamp": loan_application.timestamp.isoformat(),
+            "status": loan_application.status,
+            "applicant_info": loan_application.applicant_info.model_dump(),
+            "comaker_info": loan_application.comaker_info.model_dump(),
+            "model_input_data": loan_application.model_input_data.model_dump(),
+            "loan_officer_id": loan_application.loan_officer_id,
+        }
+        
+        # Include prediction result if available
+        if loan_application.prediction_result:
+            response["prediction_result"] = loan_application.prediction_result.model_dump()
+            
+        # Include AI explanation if requested and available
+        if include_ai_explanation and loan_application.ai_explanation:
+            response["ai_explanation"] = loan_application.ai_explanation
+            
+        # Include document URLs if available
+        if documents:
+            response["documents"] = {
+                "profile_photo_url": documents.profile_photo_url,
+                "valid_id_url": documents.valid_id_url,
+                "brgy_cert_url": documents.brgy_cert_url,
+                "e_signature_personal_url": documents.e_signature_personal_url,
+                "payslip_url": documents.payslip_url,
+                "company_id_url": documents.company_id_url,
+                "proof_of_billing_url": documents.proof_of_billing_url,
+                "e_signature_comaker_url": documents.e_signature_comaker_url,
+                "file_metadata": documents.file_metadata
+            }
+
+    except:
+        return response
+            
+        return response
+
+@router.put("/applications/{application_id}", response_model=Dict[str, Any])
+async def update_loan_application(
+    application_id: UUID,
+    update_data: Dict[str, Any],
+    current_user: Dict = Depends(get_current_active_user),
+    service: LoanApplicationService = Depends(get_loan_application_service)
+):
+    """
+    Update loan application data.
+    """
+    try:
+        logger.info(f"Updating loan application {application_id}")
+        application = await service.update_loan_application(application_id, update_data)
+
         if not application:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Loan application with ID {application_id} not found"
             )
-        
-        # Build response data
-        response_data = {
-            "application_id": str(application.application_id),
-            "timestamp": application.timestamp.isoformat(),
-            "loan_officer_id": application.loan_officer_id,
-            "applicant_info": application.applicant_info.model_dump(),
-            "comaker_info": application.comaker_info.model_dump(),
-            "model_input_data": application.model_input_data.model_dump(),
+
+        return {
+            "message": "Application updated successfully",
+            "application_id": str(application_id),
+            "updated_at": application.timestamp.isoformat(),
+            "application": {
+                "_id": {"$oid": str(application.id)},
+                "application_id": str(application.application_id),
+                "timestamp": application.timestamp.isoformat(),
+                "status": application.status,
+                "applicant_info": application.applicant_info.model_dump(),
+                "comaker_info": application.comaker_info.model_dump(),
+                "model_input_data": application.model_input_data.model_dump(),
+                "loan_officer_id": application.loan_officer_id
+            }
         }
-        
-        # Add prediction result if available
-        if application.prediction_result:
-            response_data["prediction_result"] = application.prediction_result.model_dump()
-        
-        # Add AI explanation if requested and available
-        if include_ai_explanation and hasattr(application, 'ai_explanation') and application.ai_explanation:
-            response_data["ai_explanation"] = application.ai_explanation.model_dump()
-        
-        return response_data
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error retrieving loan application {application_id}: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while retrieving the application"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail=f"Error retrieving loan application: {str(e)}"
         )
 
-@router.get("/applications", response_model=List[Dict[str, Any]])
+@router.get("/applications", response_model=Dict[str, Any])
 async def get_loan_applications(
     skip: int = Query(default=0, ge=0, description="Number of records to skip"),
-    limit: int = Query(default=100, ge=1, le=1000, description="Maximum number of records to return"),
+    limit: int = Query(default=6, ge=1, le=1000, description="Maximum number of records to return"),
     loan_officer_id: Optional[str] = Query(default=None, description="Filter by loan officer ID"),
     include_ai_explanation: bool = Query(default=False, description="Include AI explanations in response"),
     current_user: Dict = Depends(get_current_user),
     service: LoanApplicationService = Depends(get_loan_application_service)
 ):
-    """
-    Retrieve loan applications with optional filtering and pagination.
-    By default, returns applications created by the authenticated user.
-    """
     try:
-        # If no specific loan officer ID is provided, default to current user
+        # Use current user's ID if no specific loan officer ID is provided
         if loan_officer_id is None:
-            loan_officer_id = current_user["id"]
+            loan_officer_id = current_user.get("id")
+            if not loan_officer_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No loan officer ID provided and couldn't get it from current user"
+                )
         
-        # Optional: Allow admins to view all applications
-        # if current_user.get("role") == "admin":
-        #     loan_officer_id = None  # View all applications
-        
-        applications = await service.get_loan_applications(
-            skip=skip,
-            limit=limit,
-            loan_officer_id=loan_officer_id
+        logger.info(f"Fetching applications for officer {loan_officer_id} (skip={skip}, limit={limit})")
+        try:
+            result = await service.get_loan_applications(
+                skip=skip,
+                limit=limit,
+                loan_officer_id=loan_officer_id
+            )
+            logger.info(f"Successfully retrieved {len(result.get('data', []))} applications")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Service error in get_loan_applications: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error retrieving applications: {str(e)}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_loan_applications: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving applications"
         )
-        
-        # Format response data
-        response_data = []
-        for app in applications:
-            app_data = {
-                "application_id": str(app.application_id),
-                "timestamp": app.timestamp.isoformat(),
-                "loan_officer_id": app.loan_officer_id,
-                "applicant_info": app.applicant_info.model_dump(),
-                "comaker_info": app.comaker_info.model_dump(),
-            }
-            
-            # Add prediction result summary
-            if app.prediction_result:
-                app_data["prediction_result"] = {
-                    "final_credit_score": app.prediction_result.final_credit_score,
-                    "default": app.prediction_result.default,
-                    "probability_of_default": app.prediction_result.probability_of_default,
-                    "status": app.prediction_result.status,
-                    "recommendation_count": len(app.prediction_result.loan_recommendation or [])
-                }
-            
-            # Add AI explanation if requested and available
-            if include_ai_explanation and hasattr(app, 'ai_explanation') and app.ai_explanation:
-                app_data["ai_explanation"] = app.ai_explanation.model_dump()
-            
-            response_data.append(app_data)
-        
-        return response_data
         
     except Exception as e:
         logger.error(f"Error retrieving loan applications: {e}")
@@ -451,6 +566,7 @@ async def get_my_loan_applications(
         response_data = []
         for app in applications:
             app_data = {
+                "_id": {"$oid": str(app.id)},  # Include MongoDB ObjectId
                 "application_id": str(app.application_id),
                 "timestamp": app.timestamp.isoformat(),
                 "applicant_name": app.applicant_info.full_name,
@@ -480,7 +596,7 @@ async def get_my_loan_applications(
 
 @router.put("/applications/{application_id}/status")
 async def update_application_status(
-    application_id: UUID,
+    application_id: str,  # Changed from UUID to str to accept MongoDB ObjectId
     status_update: Dict[str, str],
     current_user: Dict = Depends(get_current_user),
     service: LoanApplicationService = Depends(get_loan_application_service)
@@ -490,19 +606,29 @@ async def update_application_status(
     Only accessible to authenticated users.
     """
     try:
+        logger.info(f"Received status update request: {status_update}")
         new_status = status_update.get("status")
+        logger.info(f"Extracted status: {new_status}")
+        
         if not new_status:
+            logger.error("No status provided in request")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Status is required"
             )
         
-        # Validate status value
-        valid_statuses = ["Success", "Pending", "Rejected", "Approved", "Cancelled"]
-        if new_status not in valid_statuses:
+        # Validate status value using the enum
+        try:
+            logger.info(f"Attempting to validate status: {new_status}")
+            logger.info(f"Valid statuses are: {[s.value for s in ApplicationStatusEnum]}")
+            status_enum = ApplicationStatusEnum(new_status)
+            logger.info(f"Status validated successfully as: {status_enum.value}")
+        except ValueError as e:
+            logger.error(f"Invalid status value: {new_status}")
+            logger.error(f"Validation error: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid status. Valid statuses are: {', '.join(valid_statuses)}"
+                detail=f"Invalid status. Valid statuses are: {', '.join([s.value for s in ApplicationStatusEnum])}"
             )
         
         updated_application = await service.update_application_status(

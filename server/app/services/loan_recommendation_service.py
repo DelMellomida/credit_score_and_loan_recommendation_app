@@ -49,25 +49,40 @@ class LoanRecommendationService:
         is_renewing = model_input_data.get("Is_Renewing_Client") == 1
         employment_sector = model_input_data.get("Employment_Sector", "")
         
+        logger.info(f"Starting product filtering with {len(self.loan_products)} available products")
+        logger.info(f"Client type: {'Renewing' if is_renewing else 'New'}")
+        logger.info(f"Employment sector: {employment_sector}")
+        logger.info(f"Applicant job: {getattr(applicant_info, 'job', 'Not specified')}")
+        
         logger.info(f"Filtering products for employment sector: {employment_sector}, is_renewing: {is_renewing}")
         
         for product in self.loan_products:
             rules = product["eligibility_rules"]
             
+            logger.info(f"Evaluating product: {product['product_name']}")
+            
             # Rule: Check if the product is for new or existing clients
-            if not self._check_client_type_eligibility(rules, is_renewing):
-                logger.debug(f"Product {product['product_name']} not eligible due to client type")
+            client_type_eligible = self._check_client_type_eligibility(rules, is_renewing)
+            if not client_type_eligible:
+                logger.info(f"Product {product['product_name']} not eligible due to client type requirement: "
+                         f"new_client_eligible={rules.get('is_new_client_eligible', True)}, is_renewing={is_renewing}")
                 continue
             
             # Rule: Check employment sector
-            if not self._check_employment_sector_eligibility(rules, employment_sector):
-                logger.debug(f"Product {product['product_name']} not eligible due to employment sector")
+            sector_eligible = self._check_employment_sector_eligibility(rules, employment_sector)
+            if not sector_eligible:
+                logger.info(f"Product {product['product_name']} not eligible due to sector requirement: "
+                         f"allowed_sectors={rules.get('employment_sector', [])}, applicant_sector={employment_sector}")
                 continue
             
             # Rule: Check specific job (if applicable)
-            if not self._check_job_eligibility(rules, applicant_info):
-                logger.debug(f"Product {product['product_name']} not eligible due to job requirement")
+            job_eligible = self._check_job_eligibility(rules, applicant_info)
+            if not job_eligible:
+                logger.info(f"Product {product['product_name']} not eligible due to job requirement: "
+                         f"required_jobs={rules.get('job', [])}, applicant_job={getattr(applicant_info, 'job', None)}")
                 continue
+                
+            logger.info(f"Product {product['product_name']} is eligible")
             
             eligible_products.append(product)
             logger.debug(f"Product {product['product_name']} is eligible")
