@@ -19,8 +19,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-COPY models/ /app/models/
-
 # Normalize line endings in entrypoint.sh (Windows to Unix)
 RUN sed -i 's/\r$//' entrypoint.sh
 

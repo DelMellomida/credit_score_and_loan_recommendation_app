@@ -26,12 +26,15 @@ export default function RootLayout({
   // ...existing code...
   // Import here to avoid SSR issues
   const AuthProvider = require('../context/AuthContext').AuthProvider;
+  const ToastProvider = require('../context/ToastContext').ToastProvider;
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <AuthProvider>
-          {children}
-        </AuthProvider>
+        <ToastProvider>
+          <AuthProvider>
+            {children}
+          </AuthProvider>
+        </ToastProvider>
       </body>
     </html>
   );

@@ -37,7 +37,20 @@ class LoanApplicationService:
             self._validate_loan_application_data(request_data)
             
             # Run prediction using the prediction service
-            prediction_result = await self._run_prediction(request_data.model_input_data)
+            try:
+                prediction_result = await self._run_prediction(request_data.model_input_data)
+                if not prediction_result:
+                    raise RuntimeError("Prediction service returned no result")
+            except Exception as e:
+                logger.error(f"Failed to get prediction result: {e}")
+                # Create a failed prediction result
+                prediction_result = PredictionResult(
+                    final_credit_score=0,
+                    default=1,
+                    probability_of_default=1.0,
+                    loan_recommendation=[],
+                    status="Failed",
+                )
             
             # Generate loan recommendations if service is available
             if self.recommendation_service:
@@ -81,28 +94,60 @@ class LoanApplicationService:
             raise RuntimeError(f"Failed to create loan application: {str(e)}")
         
     async def _generate_and_save_explanation(self, application: LoanApplication) -> Optional[AIExplanation]:
-        if not self.ai_service:
-            logger.warning("AIExplainabilityService is not available, skipping explanation generation")
-            return None
-        
         try:
+            if not self.ai_service:
+                logger.warning("AIExplainabilityService is not available, skipping explanation generation")
+                return None
+            
             logger.info(f"Generating AI explanation for application ID: {application.application_id}")
             
+            # Check if we have a valid prediction result
+            if not application.prediction_result:
+                error_msg = "No prediction result available for AI explanation generation"
+                logger.error(error_msg)
+                application.ai_explanation_status = "failed"
+                application.ai_explanation_error = error_msg
+                await application.save()
+                return None
+
+            if not hasattr(application.prediction_result, "model_dump"):
+                logger.error("Invalid prediction result format")
+                application.ai_explanation_status = "failed"
+                application.ai_explanation_error = "Invalid prediction result format"
+                await application.save()
+                return None
+                
             prediction_result_dict = application.prediction_result.model_dump()
             
-            # This is a synchronous call (removed await)
-            explanation_dict = self.ai_service.generate_loan_explanation(
-                application_data=application.model_input_data,
-                prediction_results=prediction_result_dict
-            )
+            # Call the AI service asynchronously
+            try:
+                explanation_dict = await self.ai_service.generate_loan_explanation_async(
+                    application_data=application.model_input_data,
+                    prediction_results=prediction_result_dict
+                )
 
-            # Handle potential failure from the AI service
-            if not explanation_dict or "technical_explanation" not in explanation_dict:
-                logger.error(f"AI service failed to return a valid explanation dict. Got: {explanation_dict}")
-                return None 
+                # Handle potential failure from the AI service
+                if not explanation_dict or "technical_explanation" not in explanation_dict:
+                    error_msg = f"AI service failed to return a valid explanation dict. Got: {explanation_dict}"
+                    logger.error(error_msg)
+                    # Set an error status in the application
+                    application.ai_explanation_status = "failed"
+                    application.ai_explanation_error = error_msg
+                    await application.save()
+                    return None
+            except Exception as e:
+                error_msg = f"AI service failed to generate explanation: {str(e)}"
+                logger.error(error_msg)
+                # Set an error status in the application
+                application.ai_explanation_status = "failed"  
+                application.ai_explanation_error = error_msg
+                await application.save()
+                return None
 
             ai_explanation = AIExplanation(**explanation_dict)
             application.ai_explanation = ai_explanation
+            application.ai_explanation_status = "success"
+            application.ai_explanation_error = None
             await application.save()
             logger.info(f"AI explanation generated and saved successfully for application ID: {application.application_id}")
             return ai_explanation
@@ -446,8 +491,17 @@ class LoanApplicationService:
             if not self.prediction_service:
                 raise RuntimeError("Prediction service is not available")
             
-            # Run prediction
-            pod_result = self.prediction_service.predict(model_input_data)
+            # Create LoanApplicationRequest instance from the input data
+            from app.schemas.loan_schema import LoanApplicationRequest
+            
+            # Convert model_input_data to dictionary if it's a Pydantic model
+            input_dict = model_input_data.model_dump() if hasattr(model_input_data, 'model_dump') else dict(model_input_data)
+            
+            # Create LoanApplicationRequest instance
+            loan_request = LoanApplicationRequest(**input_dict)
+            
+            # Run prediction with proper input format
+            pod_result = self.prediction_service.predict(loan_request)
             pod = pod_result.get("probability_of_default")
             default = pod_result.get("default_prediction")
             

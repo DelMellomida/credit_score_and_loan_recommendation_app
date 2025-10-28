@@ -1,5 +1,5 @@
 {
-  "audit_date": "2025-07-27 06:58:00",
+  "audit_date": "2025-10-29 06:02:56",
   "sensitive_features_audited": [
     "Paluwagan_Participation",
     "Has_Community_Role",
@@ -10,53 +10,48 @@
     "Paluwagan_Participation": {
       "needs_mitigation": true,
       "demographic_parity_difference": {
-        "original": 0.48281189141404196,
-        "mitigated": 0.014901466514369743
+        "original": 0.1492203535214288,
+        "mitigated": 0.011622113400756778
       },
       "equalized_odds_difference": {
-        "original": 0.5471980821096794,
-        "mitigated": 0.07176106283088601
+        "original": 0.29703326341024877,
+        "mitigated": 0.08725402057736492
       },
       "performance_impact": {
-        "accuracy": 0.1089,
-        "precision": -0.010172103776008218,
-        "recall": -0.30745341614906835,
-        "f1_score": -0.0485243047905598
+        "accuracy": -0.12390000000000001,
+        "precision": -0.14970502097941485,
+        "recall": 0.12008281573498966,
+        "f1_score": -0.0397643022974043
       }
     },
     "Has_Community_Role": {
       "needs_mitigation": true,
       "demographic_parity_difference": {
-        "original": 0.08222484324068757,
-        "mitigated": 0.013763064634222388
+        "original": 0.03297226361371115,
+        "mitigated": 0.015569244891622758
       },
       "equalized_odds_difference": {
-        "original": 0.08467681182721176,
-        "mitigated": 0.02631706411353474
+        "original": 0.10477178423236513,
+        "mitigated": 0.019815937865730437
       },
       "performance_impact": {
-        "accuracy": 0.10329999999999995,
-        "precision": 0.03460535093211076,
-        "recall": -0.11904761904761907,
-        "f1_score": 0.027839581195268304
+        "accuracy": -0.133,
+        "precision": -0.09888710433929818,
+        "recall": 0.3364389233954451,
+        "f1_score": 0.04754699899363973
       }
     },
     "Household_Head": {
-      "needs_mitigation": true,
+      "needs_mitigation": false,
       "demographic_parity_difference": {
-        "original": 0.006896470062925819,
-        "mitigated": 0.004097903080911847
+        "original": 0.006944313601433966,
+        "mitigated": null
       },
       "equalized_odds_difference": {
-        "original": 0.06537656903765687,
-        "mitigated": 0.041292269702997486
+        "original": 0.03942314287674051,
+        "mitigated": null
       },
-      "performance_impact": {
-        "accuracy": 0.06910000000000005,
-        "precision": 0.023250356117039905,
-        "recall": -0.06314699792960665,
-        "f1_score": 0.022366371823840603
-      }
+      "performance_impact": null
     }
   }
 }

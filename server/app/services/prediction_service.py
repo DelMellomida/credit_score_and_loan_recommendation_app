@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import numpy as np
 from typing import Dict, Any, Optional, List
+from enum import Enum
 import logging
 from app.schemas.loan_schema import LoanApplicationRequest
 
@@ -247,9 +248,27 @@ class PredictionService:
         if 'Number_of_Dependents' in df_processed.columns:
             df_processed['Number_of_Dependents'] = np.minimum(df_processed['Number_of_Dependents'], 5)
         
+        # Calculate Proactive Financial Health Score
+        df_processed['Proactive_Financial_Health_Score'] = 0
+        
+        # Add points for Disaster Preparedness
+        disaster_prep_savings_insurance = df_processed['Disaster_Preparedness'].isin(['Savings', 'Insurance'])
+        disaster_prep_community = df_processed['Disaster_Preparedness'] == 'Community Plan'
+        df_processed.loc[disaster_prep_savings_insurance, 'Proactive_Financial_Health_Score'] += 2
+        df_processed.loc[disaster_prep_community, 'Proactive_Financial_Health_Score'] += 1
+        
+        # Add points for Employment Tenure (12+ months)
+        df_processed.loc[df_processed['Employment_Tenure_Months'] >= 12, 'Proactive_Financial_Health_Score'] += 1
+        
+        # Add points for Years at Current Address (3+ years)
+        df_processed.loc[df_processed['Years_at_Current_Address'] >= 3, 'Proactive_Financial_Health_Score'] += 1
+        
+        # Add points for Housing Status (Owned)
+        df_processed.loc[df_processed['Housing_Status'] == 'Owned', 'Proactive_Financial_Health_Score'] += 1
+        
         return df_processed
 
-    def predict(self, input_data: LoanApplicationRequest, 
+    def predict(self, input_data: Any, 
                 apply_fairness: bool = True, 
                 sensitive_feature_name: Optional[str] = None) -> Dict[str, Any]:
         """Make a prediction based on the input data with support for fairness-aware models."""
@@ -262,9 +281,26 @@ class PredictionService:
             if input_data is None:
                 raise ValueError("Input data cannot be None.")
             
-            # Convert to DataFrame
+            # Convert to DataFrame - handle different input types
             try:
-                df = pd.DataFrame([input_data.model_dump()])
+                if hasattr(input_data, 'model_dump'):
+                    # If it's a Pydantic model
+                    data_dict = input_data.model_dump()
+                elif isinstance(input_data, dict):
+                    # If it's already a dictionary
+                    data_dict = input_data
+                else:
+                    # Try to convert to dict
+                    data_dict = dict(input_data)
+                
+                # Convert to DataFrame
+                df = pd.DataFrame([data_dict])
+                
+                # Convert enum values to strings
+                for col in df.columns:
+                    if isinstance(df[col].iloc[0], Enum):
+                        df[col] = df[col].map(lambda x: x.value)
+                        
             except Exception as e:
                 raise ValueError(f"Failed to convert input data to DataFrame: {e}")
             

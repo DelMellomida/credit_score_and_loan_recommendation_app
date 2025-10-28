@@ -1,15 +1,29 @@
 import React, { useState } from 'react';
 import type { ReactElement } from 'react';
-import { Upload, ArrowLeft, X, FileText, Trash2 } from 'lucide-react';
+import { Upload, ArrowLeft, X, FileText, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { PositionField } from './forms/PositionField';
+import { validatePosition, Position } from '@/lib/positionValidation';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { ScrollArea } from './ui/scroll-area';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Applicant } from './ApplicantList';
-import { FormData } from '../app/page';
+import { FormData } from '@/lib/formTypes';
 import { transformToApplicant } from '../lib/transformData';
 import { useAuth } from '../context/AuthContext';
+import { deleteLoanApplication } from '@/lib/api';
 
 import { useEffect } from 'react';
 import { getApplicationDocuments, getLoanApplication, refreshApplicationDocumentUrls, updateApplicationDocumentUrls } from '@/lib/api';
@@ -56,6 +70,22 @@ interface ApplicationData {
   application_id?: string | BinaryId;
   prediction_result?: {
     loan_recommendation?: LoanRecommendation[];
+    status?: string;
+    final_credit_score?: number;
+    probability_of_default?: number;
+  };
+  model_input_data?: {
+    Employment_Tenure_Months?: number;
+    Salary_Frequency?: string;
+    Housing_Status?: string;
+    Years_at_Current_Address?: number;
+    Number_of_Dependents?: number;
+  };
+  ai_explanation?: {
+    technical_explanation: string;
+    business_explanation: string;
+    risk_factors: string;
+    recommendations: string;
   };
   timestamp: string;
   status: string;
@@ -70,6 +100,20 @@ export function ApplicantOverview({
   onBack,
   onSave,
 }: ApplicantOverviewProps) {
+  // Helper function to calculate risk level and class
+  const calculateRisk = (score: number | undefined) => {
+    const creditScore = score ?? 0;
+    return {
+      class: creditScore >= 740 ? 'bg-green-100 text-green-700' :
+             creditScore >= 670 ? 'bg-blue-100 text-blue-700' :
+             creditScore >= 580 ? 'bg-yellow-100 text-yellow-700' :
+             'bg-red-100 text-red-700',
+      level: creditScore >= 740 ? 'Very Low Risk' :
+             creditScore >= 670 ? 'Low Risk' :
+             creditScore >= 580 ? 'Moderate Risk' :
+             'High Risk'
+    };
+  };
   console.log('Applicant Data:', {
     fullApplicant: applicant,
     formData: applicant.formData,
@@ -108,6 +152,7 @@ export function ApplicantOverview({
 
   // application UUID (from applicationData.application_id) used to refresh signed URLs
   const [applicationUUID, setApplicationUUID] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<'recommendation' | 'prediction' | 'explanation'>('recommendation');
 
   // Track image retry attempts to avoid infinite refresh loops for all document types
   const [imageRetries, setImageRetries] = useState<Record<string, number>>({
@@ -379,9 +424,11 @@ export function ApplicantOverview({
     });
   };
 
-  // Get loan recommendations from application data
-  const recommendations = applicationData?.prediction_result?.loan_recommendation || [];
+  // Get loan recommendations and prediction data from application data
+  const predictionResult = applicationData?.prediction_result;
+  const recommendations = predictionResult?.loan_recommendation || [];
   const topRecommendation = recommendations.find(rec => rec.is_top_recommendation) || recommendations[0];
+  const hasAiExplanation = Boolean(applicationData?.ai_explanation);
   
   const recommendedLoan = topRecommendation ? {
     product: topRecommendation.product_name,
@@ -439,13 +486,42 @@ export function ApplicantOverview({
           </Button>
           <h2 className="text-2xl">Applicant Overview</h2>
         </div>
-        <Button
-          onClick={() => {}} // TODO: Implement delete functionality
-          className="flex items-center gap-2 bg-red-600 hover:bg-red-700"
-        >
-          <Trash2 className="h-4 w-4" />
-          Delete Application
-        </Button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              className="flex items-center gap-2 bg-red-600 hover:bg-red-700"
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete Application
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Loan Application</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete this loan application? This action will permanently delete all related documents and cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={async () => {
+                  if (!user?.token || !applicationUUID) return;
+                  try {
+                    await deleteLoanApplication(applicationUUID, user.token);
+                    // Navigate back to list view
+                    onBack();
+                  } catch (error) {
+                    console.error('Error deleting application:', error);
+                  }
+                }}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
 
       {/* Main Content */}
@@ -630,13 +706,10 @@ export function ApplicantOverview({
                       onChange={(e) => handleInputChange('employee', 'sector', e.target.value)}
                     />
                   </div>
-                  <div>
-                    <Label>Position</Label>
-                    <Input
-                      value={editableData.employee.position}
-                      onChange={(e) => handleInputChange('employee', 'position', e.target.value)}
-                    />
-                  </div>
+                  <PositionField
+                    value={validatePosition(editableData.employee.position)}
+                    onChange={(value) => handleInputChange('employee', 'position', value)}
+                  />
                   <div>
                     <Label>Employment Duration</Label>
                     <Input
@@ -752,36 +825,134 @@ export function ApplicantOverview({
         <div className="w-96">
           <ScrollArea className="h-full">
             <div className="space-y-4 pr-4">
-              {/* Loan Recommendation */}
-              <Card className="bg-green-50 border-green-200">
-                <CardHeader>
-                  <CardTitle className="text-green-800">Loan Recommendation</CardTitle>
+              {/* Summary Carousel */}
+              <Card className="relative">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-gray-800 flex-1">
+                    {applicationData?.prediction_result?.status === "Approved" ? (
+                      <span className="text-green-600">Approved</span>
+                    ) : applicationData?.prediction_result?.status === "Denied" ? (
+                      <span className="text-red-600">Denied</span>
+                    ) : (
+                      <span className="text-yellow-600">Pending</span>
+                    )}
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        setActiveSection(prev => 
+                          prev === 'explanation' ? 'prediction' :
+                          prev === 'prediction' ? 'recommendation' :
+                          'explanation'
+                        );
+                      }}
+                      className="h-8 w-8"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        setActiveSection(prev => 
+                          prev === 'recommendation' ? 'prediction' :
+                          prev === 'prediction' ? 'explanation' :
+                          'recommendation'
+                        );
+                      }}
+                      className="h-8 w-8"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </CardHeader>
+
                 <CardContent className="space-y-2">
-                  <div>
-                    <p className="text-sm text-gray-600">Recommended Product</p>
-                    <p className="font-medium">{recommendedLoan.product}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Maximum Loanable Amount</p>
-                    <p className="font-medium">{recommendedLoan.amount}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Term</p>
-                    <p className="font-medium">{recommendedLoan.term}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Interest Rate</p>
-                    <p className="font-medium">{recommendedLoan.interest}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Estimated Amortization</p>
-                    <p className="font-medium">{recommendedLoan.amortization}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Suitability Score</p>
-                    <p className="font-medium text-green-700">{recommendedLoan.suitability}</p>
-                  </div>
+                  {activeSection === 'recommendation' && (
+                    <div className="space-y-2">
+                      <h3 className="font-semibold">Loan Recommendation</h3>
+                      <div>
+                        <p className="text-sm text-gray-600">Recommended Product</p>
+                        <p className="font-medium">{recommendedLoan.product}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600">Maximum Loanable Amount</p>
+                        <p className="font-medium">{recommendedLoan.amount}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600">Term</p>
+                        <p className="font-medium">{recommendedLoan.term}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600">Interest Rate</p>
+                        <p className="font-medium">{recommendedLoan.interest}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600">Estimated Amortization</p>
+                        <p className="font-medium">{recommendedLoan.amortization}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600">Suitability Score</p>
+                        <p className="font-medium text-green-700">{recommendedLoan.suitability}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeSection === 'prediction' && (
+                    <div className="space-y-2">
+                      <h3 className="font-semibold">Credit Score Analysis</h3>
+                      <div>
+                        <p className="text-sm text-gray-600">Credit Score</p>
+                        <p className="font-medium">
+                          {applicationData?.prediction_result?.final_credit_score}
+                          {(() => {
+                            const creditScore = applicationData?.prediction_result?.final_credit_score ?? 0;
+                            const risk = calculateRisk(creditScore);
+                            return (
+                              <span className={`ml-2 px-2 py-0.5 text-xs rounded ${risk.class}`}>
+                                {risk.level}
+                              </span>
+                            );
+                          })()}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600">Default Probability</p>
+                        <p className="font-medium">
+                          {((applicationData?.prediction_result?.probability_of_default ?? 0) * 100).toFixed(2)}%
+                        </p>
+                      </div>
+                      {/* Key risk factors section removed */}
+                    </div>
+                  )}
+
+                  {activeSection === 'explanation' && applicationData?.ai_explanation && (
+                    <div className="space-y-2">
+                      <h3 className="font-semibold">AI Analysis</h3>
+                      {applicationData.ai_explanation.technical_explanation.includes("Error") ? (
+                        <div className="text-yellow-600 text-sm">
+                          AI explanation is currently unavailable for this application.
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <p className="text-sm font-medium">Business Analysis</p>
+                            <p className="text-sm text-gray-600 mt-1">{applicationData.ai_explanation.business_explanation}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium">Risk Factors</p>
+                            <p className="text-sm text-gray-600 mt-1">{applicationData.ai_explanation.risk_factors}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium">Recommendations</p>
+                            <p className="text-sm text-gray-600 mt-1">{applicationData.ai_explanation.recommendations}</p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 

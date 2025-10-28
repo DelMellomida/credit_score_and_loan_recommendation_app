@@ -11,6 +11,15 @@ import {
   TableRow,
 } from './ui/table';
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select';
+import {
   Pagination,
   PaginationContent,
   PaginationItem,
@@ -45,6 +54,7 @@ export function ApplicantsList({
 }: Partial<ApplicantsListProps>) {
   const { user } = useAuth(); // Get user from auth context
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,6 +147,11 @@ export function ApplicantsList({
       await fetchApplications(); // Refresh the list
     } catch (error) {
       console.error('Failed to approve application:', error);
+      // Log the full error response if available
+      if (error instanceof Response) {
+        const errorText = await error.text();
+        console.error('Full error response:', errorText);
+      }
       if (error instanceof Error && error.message.includes('Not authenticated')) {
         setError('Please log in to approve applications.');
       } else {
@@ -203,18 +218,30 @@ export function ApplicantsList({
   const deniedCount = applicants.filter(a => a.status === 'denied').length;
   const cancelledCount = applicants.filter(a => a.status === 'cancelled').length;
 
-  // Filter applicants based on search query
+  // Filter applicants based on search query and status
   const filteredApplicants = useMemo(() => {
-    if (!searchQuery.trim()) return applicants;
+    let filtered = applicants;
     
-    const query = searchQuery.toLowerCase();
-    return applicants.filter(applicant =>
-      applicant.name.toLowerCase().includes(query) ||
-      applicant.email.toLowerCase().includes(query) ||
-      applicant.loanProduct.toLowerCase().includes(query) ||
-      applicant.loanAmount.toLowerCase().includes(query)
-    );
-  }, [applicants, searchQuery]);
+    // Apply status filter
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(applicant => 
+        applicant.status.toLowerCase() === statusFilter.toLowerCase()
+      );
+    }
+    
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(applicant =>
+        applicant.name.toLowerCase().includes(query) ||
+        applicant.email.toLowerCase().includes(query) ||
+        applicant.loanProduct.toLowerCase().includes(query) ||
+        applicant.loanAmount.toLowerCase().includes(query)
+      );
+    }
+    
+    return filtered;
+  }, [applicants, searchQuery, statusFilter]);
 
   // State for total pages
   const [totalPages, setTotalPages] = useState(1);
@@ -300,16 +327,36 @@ export function ApplicantsList({
 
       {/* Search Bar and Pagination Row */}
       <div className="flex items-center justify-between gap-4">
-        {/* Search Bar */}
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <Input
-            type="text"
-            placeholder="Search by name, email, loan product, or amount..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
-          />
+        {/* Search and Filter Section */}
+        <div className="flex gap-4 flex-1">
+          {/* Status Filter */}
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Filter by status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectLabel>Application Status</SelectLabel>
+                <SelectItem value="all">All Applications</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="denied">Denied</SelectItem>
+                <SelectItem value="cancelled">Cancelled</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+
+          {/* Search Bar */}
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Input
+              type="text"
+              placeholder="Search by name, email, loan product, or amount..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
+          </div>
         </div>
 
         {/* Pagination - show if we have pages to navigate */}

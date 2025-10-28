@@ -9,6 +9,7 @@ import { CoMakerDataForm } from "./forms/CoMakerDataForm";
 import type { FormData } from "../app/page";
 import { transformLoanFormData } from "../lib/loanTransform";
 import { createLoanApplication, uploadDocuments } from "../lib/api";
+import { useToast } from '../context/ToastContext';
 
 export function ProcessForm({
   formData,
@@ -24,6 +25,8 @@ export function ProcessForm({
   token?: string;
 }) {
   const [currentStep, setCurrentStep] = useState(1);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { showToast } = useToast();
 
   const steps = [
     { number: 1, title: "Personal Data" },
@@ -70,18 +73,20 @@ export function ProcessForm({
   }
 
   const handleSubmit = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     try {
       // Create FormData with both application data and files
       const formDataToSend = new FormData();
-      
+
       // Add the request data
       const payload = transformLoanFormData(formData);
       formDataToSend.append('request_data', JSON.stringify(payload));
-      
+
       // Add all files
       Object.entries(files).forEach(([key, file]) => {
         if (file) {
-          formDataToSend.append(key, file);
+          formDataToSend.append(key, file as File);
         } else {
           // If file is missing, add an empty blob to satisfy the required field
           formDataToSend.append(key, new Blob([''], { type: 'application/octet-stream' }));
@@ -89,14 +94,17 @@ export function ProcessForm({
       });
 
       // Send everything in one request
-      const result = await createLoanApplication(formDataToSend, token) as ApplicationResponse;
-      
-      setLoanResult(result);
-      // Show success message or redirect
+      const result = (await createLoanApplication(formDataToSend, token)) as ApplicationResponse;
+
+  setLoanResult(result);
+  showToast('Loan application created successfully', 'success');
     } catch (err: any) {
-      // Show error message
-      console.error(err);
+      console.error('Create application failed:', err);
+  const message = err?.message || (typeof err === 'string' ? err : 'Failed to create loan application');
+  showToast(`Error: ${message}`, 'error');
       setLoanResult(null);
+    } finally {
+      setIsSubmitting(false);
     }
   };
   const nextStep = () => setCurrentStep((prev) => Math.min(prev + 1, 4));
@@ -218,8 +226,9 @@ export function ProcessForm({
               <Button
                 onClick={handleSubmit}
                 className="bg-red-600 hover:bg-red-700 text-white"
+                disabled={isSubmitting}
               >
-                New Applicant
+                {isSubmitting ? 'Submitting...' : 'Submit Application'}
               </Button>
             )}
           </div>

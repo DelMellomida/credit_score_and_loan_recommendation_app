@@ -79,11 +79,12 @@ async def process_loan_application(
                 # Don't raise the error, just log it as recommendations are optional
                 prediction_result.loan_recommendation = []
         
+        # Update the prediction result and AI explanation in loan application before saving
+        loan_application.prediction_result = prediction_result
+
         # Generate AI explanation
         ai_explanation = await service._generate_and_save_explanation(loan_application)
-        
-        # Update the prediction result in loan application before saving
-        loan_application.prediction_result = prediction_result
+        loan_application.ai_explanation = ai_explanation  # Add this line to save the AI explanation
         
         # Save loan application
         await loan_application.save()

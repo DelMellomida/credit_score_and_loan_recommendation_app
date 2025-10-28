@@ -355,7 +355,7 @@ async def get_loan_application_by_id(
             
         # Add AI explanation if requested and available
         if include_ai_explanation and loan_application.ai_explanation:
-            response["ai_explanation"] = loan_application.ai_explanation
+            response["ai_explanation"] = loan_application.ai_explanation.model_dump()
             
         # Get and add documents if available
         from app.database.models.document_model import ApplicationDocument
@@ -442,10 +442,16 @@ async def get_loan_application(
                 "file_metadata": documents.file_metadata
             }
 
-    except:
-        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving loan application {application_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving loan application: {str(e)}"
+        )
             
-        return response
+    return response
 
 @router.put("/applications/{application_id}", response_model=Dict[str, Any])
 async def update_loan_application(
@@ -617,12 +623,16 @@ async def update_application_status(
                 detail="Status is required"
             )
         
-        # Validate status value using the enum
+        # Validate status value using the enum (case-insensitive)
         try:
             logger.info(f"Attempting to validate status: {new_status}")
             logger.info(f"Valid statuses are: {[s.value for s in ApplicationStatusEnum]}")
-            status_enum = ApplicationStatusEnum(new_status)
+            # Convert input to title case to match enum values
+            normalized_status = new_status.title()
+            status_enum = ApplicationStatusEnum(normalized_status)
             logger.info(f"Status validated successfully as: {status_enum.value}")
+            # Use the validated enum value
+            new_status = status_enum.value
         except ValueError as e:
             logger.error(f"Invalid status value: {new_status}")
             logger.error(f"Validation error: {str(e)}")

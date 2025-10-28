@@ -100,6 +100,8 @@ class LoanApplication(Document):
     prediction_result: Optional[PredictionResult] = Field(None, description="Result of the model prediction")
     
     ai_explanation: Optional[AIExplanation] = Field(None, description="Explanation of the AI model's prediction")
+    ai_explanation_status: Optional[str] = Field(None, description="Status of the AI explanation generation (success/failed)")
+    ai_explanation_error: Optional[str] = Field(None, description="Error message if AI explanation generation failed")
 
     class Settings:
         name = "loan_applications"

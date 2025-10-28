@@ -25,7 +25,7 @@ except (ValueError, AttributeError) as e:
 class AIExplainabilityService:
     """Service for generating AI-powered explanations of loan decisions."""
     
-    def __init__(self, model_name: str = "gemini-1.5-flash-latest"):
+    def __init__(self, model_name: str = "gemini-2.5-flash"):
         """Initialize the AI explainability service."""
         try:
             if not _is_service_configured:
@@ -37,14 +37,14 @@ class AIExplainabilityService:
             logger.error(f"Failed to initialize AI service model: {e}", exc_info=True)
             raise RuntimeError(f"AI service initialization failed: {e}")
 
-    def generate_loan_explanation(
+    async def generate_loan_explanation_async(
         self,
         application_data: LoanApplicationRequest,
         prediction_results: Dict[str, Any],
         feature_importance: Optional[Dict[str, float]] = None
     ) -> Dict[str, str]:
         """
-        Generate comprehensive explanation of loan decision using AI.
+        Generate comprehensive explanation of loan decision using AI asynchronously.
         Returns a dictionary of explanations.
         """
         try:
@@ -52,11 +52,11 @@ class AIExplainabilityService:
                 application_data, prediction_results, feature_importance
             )
             explanations = {
-                "technical_explanation": self._call_ai_model(self._generate_technical_explanation(analysis_data)),
-                "business_explanation": self._call_ai_model(self._generate_business_explanation(analysis_data)),
-                "customer_explanation": self._call_ai_model(self._generate_customer_explanation(analysis_data)),
-                "risk_factors": self._call_ai_model(self._generate_risk_factors_explanation(analysis_data)),
-                "recommendations": self._call_ai_model(self._generate_recommendations(analysis_data)),
+                "technical_explanation": await self._call_ai_model(self._generate_technical_explanation(analysis_data)),
+                "business_explanation": await self._call_ai_model(self._generate_business_explanation(analysis_data)),
+                "customer_explanation": await self._call_ai_model(self._generate_customer_explanation(analysis_data)),
+                "risk_factors": await self._call_ai_model(self._generate_risk_factors_explanation(analysis_data)),
+                "recommendations": await self._call_ai_model(self._generate_recommendations(analysis_data)),
             }
             return explanations
         except Exception as e:
@@ -64,14 +64,14 @@ class AIExplainabilityService:
             error_msg = f"Error generating explanation: {e}"
             return {key: error_msg for key in ["technical_explanation", "business_explanation", "customer_explanation", "risk_factors", "recommendations"]}
 
-    def _call_ai_model(self, prompt: str) -> str:
+    async def _call_ai_model(self, prompt: str) -> str:
         """Call the AI model with error handling."""
         try:
             generation_config = GenerationConfig(
                 temperature=0.3
             )
             
-            response = self.model.generate_content(
+            response = await self.model.generate_content_async(
                 prompt,
                 generation_config=generation_config
             )

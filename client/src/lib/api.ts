@@ -44,67 +44,118 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     }
   }
 
-  const hasAuth = 'Authorization' in headers;
-  const requestUrl = `${API_URL}${endpoint}`;
+  // Try to execute the request with automatic token refresh on 401
+  const executeRequest = async (shouldRefresh = true): Promise<T> => {
+    const requestUrl = `${API_URL}${endpoint}`;
+    const hasAuth = 'Authorization' in headers;
 
-  console.log('Making request:', {
-    url: requestUrl,
-    method: options.method || 'GET',
-    hasAuth,
-    authType: hasAuth ? headers.Authorization?.split(' ')[0] : undefined
-  });
-
-  try {
-    const response = await fetch(requestUrl, {
-      ...options,
-      headers,
-      credentials: 'include', // for cookies if needed
+    console.log('Making request:', {
+      url: requestUrl,
+      method: options.method || 'GET',
+      hasAuth,
+      authType: hasAuth ? headers.Authorization?.split(' ')[0] : undefined
     });
 
-    // Log response status and headers for debugging
-    console.log('Response received:', {
-      url: endpoint,
-      status: response.status,
-      ok: response.ok,
-      contentType: response.headers.get('content-type')
-    });
-
-    if (!response.ok) {
-      const contentType = response.headers.get('content-type');
-      let errorData;
-      
-      try {
-        errorData = contentType?.includes('application/json') 
-          ? await response.json()
-          : { message: response.statusText };
-      } catch {
-        errorData = { message: response.statusText };
-      }
-
-      console.error('API Error:', {
-        status: response.status,
-        statusText: response.statusText,
-        error: errorData
+    try {
+      const response = await fetch(requestUrl, {
+        ...options,
+        headers,
+        credentials: 'include',
       });
 
-      throw new Error(errorData.detail || errorData.message || 'API error');
+      // Log response status and headers for debugging
+      console.log('Response received:', {
+        url: endpoint,
+        status: response.status,
+        ok: response.ok,
+        contentType: response.headers.get('content-type')
+      });
+
+      if (!response.ok) {
+        // Handle 401 Unauthorized with token refresh
+        if (response.status === 401 && shouldRefresh && headers.Authorization) {
+          // Get stored user data
+          const storedUser = localStorage.getItem('authUser');
+          if (!storedUser) {
+            throw new Error('Authentication required');
+          }
+
+          const user = JSON.parse(storedUser);
+
+          try {
+            // Attempt to refresh the token
+            const refreshResponse = await fetch(`${API_URL}/auth/refresh`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${user.token}`,
+                'Content-Type': 'application/json'
+              }
+            });
+
+            if (!refreshResponse.ok) {
+              // If refresh fails, clear authentication and throw error
+              localStorage.removeItem('authUser');
+              window.dispatchEvent(new Event('auth-error'));
+              throw new Error('Session expired. Please log in again.');
+            }
+
+            // Get new token
+            const { access_token } = await refreshResponse.json();
+
+            // Update stored user data
+            user.token = access_token;
+            localStorage.setItem('authUser', JSON.stringify(user));
+
+            // Update Authorization header with new token
+            headers.Authorization = `Bearer ${access_token}`;
+
+            // Retry the original request with the new token
+            return executeRequest(false);
+          } catch (error) {
+            console.error('Token refresh failed:', error);
+            throw error;
+          }
+        }
+
+        // Handle non-401 errors
+        const contentType = response.headers.get('content-type');
+        let errorData;
+        
+        try {
+          errorData = contentType?.includes('application/json') 
+            ? await response.json()
+            : { message: response.statusText };
+        } catch {
+          errorData = { message: response.statusText };
+        }
+
+        console.error('API Error:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData
+        });
+
+        throw new Error(errorData.detail || errorData.message || 'API error');
+      }
+
+      const data = await response.json();
+      console.log('API Success:', {
+        endpoint,
+        status: response.status,
+        dataType: typeof data
+      });
+
+      return data;
+    } catch (error) {
+      console.error('Request failed:', {
+        url: endpoint,
+        error: error instanceof Error ? error.message : (error ? String(error) : 'Unknown error')
+      });
+      throw error;
     }
+  };
 
-    const data = await response.json();
-    console.log('API Success:', {
-      endpoint,
-      status: response.status,
-      dataType: typeof data
-    });
-
-    return data;
-  } catch (error) {
-    console.error('Request failed:', {
-      url: endpoint,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-    throw error;
-  }
+  return executeRequest();
 }
 
 // Transform backend response to frontend Applicant type is now imported from './transformData'
@@ -299,13 +350,22 @@ export async function updateApplicationStatus(
     hasToken: !!token
   });
 
-  return request(`/loans/applications/${applicationId}/status`, {
-    method: 'PUT',
-    body: JSON.stringify({ 
-      status: mappedStatus
-    }),
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  try {
+    const response = await request(`/loans/applications/${applicationId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ 
+        status: mappedStatus
+      }),
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    return response;
+  } catch (error) {
+    console.error('Status update error:', error);
+    if (error instanceof Error) {
+      throw new Error(error.message || 'Failed to update application status');
+    }
+    throw error;
+  }
 }
 
 export async function getLoanApplication(applicationId: string, token?: string) {

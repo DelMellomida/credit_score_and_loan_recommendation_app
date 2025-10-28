@@ -1,6 +1,7 @@
 "use client";
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { login as apiLogin, signup as apiSignup } from '../lib/api';
+import { useToast } from './ToastContext';
 
 interface AuthUser {
   email: string;
@@ -13,6 +14,7 @@ interface AuthContextType {
   login: (username: string, password: string) => Promise<void>;
   signup: (email: string, full_name: string, password: string) => Promise<void>;
   logout: () => void;
+  refreshToken: () => Promise<boolean>;
   loading: boolean;
   error: string | null;
 }
@@ -23,6 +25,40 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { showToast } = useToast();
+
+  const refreshToken = async (): Promise<boolean> => {
+    if (!user) return false;
+
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${user.token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          logout(); // Token is invalid/expired, logout the user
+          return false;
+        }
+        throw new Error('Failed to refresh token');
+      }
+
+      const data = await response.json();
+      setUser(prev => prev ? { ...prev, token: data.access_token } : null);
+      localStorage.setItem('authUser', JSON.stringify({ 
+        ...user, 
+        token: data.access_token 
+      }));
+      return true;
+    } catch (err) {
+      console.error('Token refresh failed:', err);
+      return false;
+    }
+  };
 
   // Restore user from localStorage on mount
   useEffect(() => {
@@ -86,14 +122,46 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const logout = () => {
+  const logout = (showNotification = false) => {
     setUser(null);
     setError(null);
     localStorage.removeItem('authUser');
+    
+    if (showNotification) {
+      showToast('Your session has expired. Please log in again.', 'info');
+    }
   };
 
+  // Set up automatic token refresh and auth error handling
+  useEffect(() => {
+    if (!user) return;
+
+    // Set up token refresh interval
+    const refreshInterval = setInterval(async () => {
+      console.log('Attempting to refresh token...');
+      const success = await refreshToken();
+      if (!success) {
+        console.log('Token refresh failed, logging out...');
+        logout();
+      }
+    }, 10 * 60 * 1000); // 10 minutes
+
+    // Set up auth error listener
+    const handleAuthError = () => {
+      console.log('Auth error detected, logging out...');
+      logout(true); // Show notification when logging out due to auth error
+    };
+
+    window.addEventListener('auth-error', handleAuthError);
+
+    return () => {
+      clearInterval(refreshInterval);
+      window.removeEventListener('auth-error', handleAuthError);
+    };
+  }, [user]);
+
   return (
-    <AuthContext.Provider value={{ user, login, signup, logout, loading, error }}>
+    <AuthContext.Provider value={{ user, login, signup, logout, refreshToken, loading, error }}>
       {children}
     </AuthContext.Provider>
   );

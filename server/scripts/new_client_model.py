@@ -146,6 +146,42 @@ for col in numerical_cols:
 X['Number_of_Dependents'] = np.minimum(X['Number_of_Dependents'], 5)
 print(f"\nApplied capping to Number_of_Dependents (max=5)")
 
+# ============================================================================
+# ADJUSTMENT 1: CREATE PROACTIVE FINANCIAL HEALTH SCORE
+# ============================================================================
+print("\n=== CREATING PROACTIVE FINANCIAL HEALTH SCORE ===")
+print("This feature captures positive financial habits and behaviors")
+
+# Initialize the score
+X['Proactive_Financial_Health_Score'] = 0
+
+# Add points for Disaster Preparedness
+disaster_prep_savings_insurance = X['Disaster_Preparedness'].isin(['Savings', 'Insurance'])
+disaster_prep_community = X['Disaster_Preparedness'] == 'Community Plan'
+X.loc[disaster_prep_savings_insurance, 'Proactive_Financial_Health_Score'] += 2
+X.loc[disaster_prep_community, 'Proactive_Financial_Health_Score'] += 1
+
+# Add points for Employment Tenure (12+ months)
+X.loc[X['Employment_Tenure_Months'] >= 12, 'Proactive_Financial_Health_Score'] += 1
+
+# Add points for Years at Current Address (3+ years)
+X.loc[X['Years_at_Current_Address'] >= 3, 'Proactive_Financial_Health_Score'] += 1
+
+# Add points for Housing Status (Owned)
+X.loc[X['Housing_Status'] == 'Owned', 'Proactive_Financial_Health_Score'] += 1
+
+print(f"Proactive Financial Health Score distribution:")
+print(X['Proactive_Financial_Health_Score'].value_counts().sort_index())
+print(f"Mean score: {X['Proactive_Financial_Health_Score'].mean():.2f}")
+
+# Add the new feature to all_features list (keep original features)
+all_features.append('Proactive_Financial_Health_Score')
+
+# Add to numerical columns for scaling
+numerical_cols.append('Proactive_Financial_Health_Score')
+
+print(f"\nUpdated feature count: {len(all_features)}")
+
 # Train-test split
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
@@ -313,13 +349,21 @@ final_preprocessor, final_ordinal_features, final_nominal_features = create_prep
 
 print("\n2. Training Forced-Sensitive Model (C=10.0)...")
 
+# ============================================================================
+# ADJUSTMENT 2: MODIFY CLASS WEIGHTING
+# ============================================================================
+# Replace class_weight='balanced' with manually defined weights
+# The weight of 4 for class 1 (defaults) is a tunable hyperparameter
+# Lower values make the model less punitive toward risk factors
+custom_class_weights = {0: 1, 1: 4}  # 4 is tunable: higher = more sensitive to defaults
+
 # Create forced-sensitive pipeline
 forced_sensitive_pipeline = Pipeline([
     ('preprocessor', final_preprocessor),
     ('classifier', LogisticRegression(
         penalty='l2',
         C=10.0,
-        class_weight='balanced',
+        class_weight=custom_class_weights,  # Using custom weights instead of 'balanced'
         random_state=42,
         max_iter=1000,
         solver='lbfgs'
@@ -347,16 +391,20 @@ balanced_pipeline = Pipeline([
     ('preprocessor', final_preprocessor),
     ('classifier', LogisticRegression(
         penalty='l2',
-        class_weight='balanced',
-        random_s3tate=42,
+        class_weight=custom_class_weights,  # Using custom weights instead of 'balanced'
+        random_state=42,
         max_iter=1000,
         solver='lbfgs'
     ))
 ])
 
-# Define parameter grid
+# ============================================================================
+# ADJUSTMENT 3: MODIFY HYPERPARAMETER TUNING FOR REGULARIZATION
+# ============================================================================
+# Changed C values to explore stronger regularization (lower C = stronger regularization)
+# This makes the model less sensitive to individual features
 param_grid = {
-    'classifier__C': [0.01, 0.1, 1, 10]
+    'classifier__C': [0.01, 0.1, 0.5, 1.0, 5.0]  # Exploring stronger regularization values
 }
 
 # Perform grid search
@@ -857,9 +905,11 @@ metadata = {
     'features_used': current_features['all_features'],
     'features_removed_vif': list(set(all_features) - set(current_features['all_features'])),
     'regularization_parameter': best_balanced_model.named_steps['classifier'].C,
+    'class_weights': custom_class_weights,
     'training_date': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
     'test_roc_auc': roc_auc_score(y_test, y_pred_proba_balanced),
-    'fairness_applied': hasattr(model_to_save, 'fairness_postprocessors')
+    'fairness_applied': hasattr(model_to_save, 'fairness_postprocessors'),
+    'includes_proactive_health_score': True
 }
 
 metadata_path = f"{MODEL_DIR}/model_metadata.json"
@@ -867,6 +917,121 @@ with open(metadata_path, 'w') as f:
     json.dump(metadata, f, indent=2)
 
 print(f"✓ Model metadata saved to: {metadata_path}")
+
+# ============================================================================
+# ADJUSTMENT 4: ADD SCORE CALIBRATION FUNCTION
+# ============================================================================
+print("\n" + "="*80)
+print("PHASE 5: CREDIT SCORE CALIBRATION")
+print("="*80)
+
+def probability_to_score(prob_default, min_score=300, max_score=850):
+    """
+    Convert probability of default to credit score (300-850 scale).
+    
+    Parameters:
+    -----------
+    prob_default : float
+        Probability of default (0 to 1)
+    min_score : int
+        Minimum credit score (default: 300)
+    max_score : int
+        Maximum credit score (default: 850)
+    
+    Returns:
+    --------
+    int : Credit score
+    """
+    good_prob = 0.05  # Represents a low-risk applicant
+    bad_prob = 0.50   # Represents a high-risk applicant
+    target_score_good = 720
+    target_score_bad = 550
+    slope = (target_score_bad - target_score_good) / (bad_prob - good_prob)
+    intercept = target_score_good - slope * good_prob
+    score = intercept + slope * prob_default
+    return int(np.clip(score, min_score, max_score))
+
+print("✓ Credit score calibration function defined")
+print("\nFunction maps probability of default to credit score:")
+print("  - Low risk (5% default prob) → 720 score")
+print("  - High risk (50% default prob) → 550 score")
+print("  - Linear interpolation for values in between")
+print("  - Scores capped between 300-850")
+
+# ============================================================================
+# DEMONSTRATION: Using the Model to Score an Applicant
+# ============================================================================
+print("\n" + "="*80)
+print("DEMONSTRATION: SCORING A SAMPLE APPLICANT")
+print("="*80)
+
+# Select a sample applicant from the test set
+sample_index = 0
+sample_applicant = X_test_final.iloc[[sample_index]]
+
+print("\nSample Applicant Profile:")
+print("-" * 60)
+for feature in sample_applicant.columns:
+    print(f"  {feature}: {sample_applicant[feature].values[0]}")
+
+# Get probability of default from the model
+if hasattr(loaded_model, 'predict_proba'):
+    # For both standard and fairness-aware models
+    prob_default = loaded_model.predict_proba(sample_applicant)[0, 1]
+else:
+    # Fallback
+    prob_default = best_balanced_model.predict_proba(sample_applicant)[0, 1]
+
+# Convert to credit score
+credit_score = probability_to_score(prob_default)
+
+print("\n" + "="*60)
+print("SCORING RESULTS")
+print("="*60)
+print(f"Probability of Default: {prob_default:.4f} ({prob_default*100:.2f}%)")
+print(f"Credit Score: {credit_score}")
+
+# Interpret the score
+if credit_score >= 720:
+    rating = "Excellent"
+elif credit_score >= 680:
+    rating = "Good"
+elif credit_score >= 600:
+    rating = "Fair"
+elif credit_score >= 550:
+    rating = "Poor"
+else:
+    rating = "Very Poor"
+
+print(f"Credit Rating: {rating}")
+print("="*60)
+
+# Additional demonstration with multiple samples
+print("\n" + "="*80)
+print("ADDITIONAL SAMPLE PREDICTIONS")
+print("="*80)
+
+num_samples = min(5, len(X_test_final))
+sample_results = []
+
+for i in range(num_samples):
+    sample = X_test_final.iloc[[i]]
+    if hasattr(loaded_model, 'predict_proba'):
+        prob = loaded_model.predict_proba(sample)[0, 1]
+    else:
+        prob = best_balanced_model.predict_proba(sample)[0, 1]
+    score = probability_to_score(prob)
+    actual = y_test.iloc[i]
+    
+    sample_results.append({
+        'Sample': i+1,
+        'Prob_Default': f"{prob:.4f}",
+        'Credit_Score': score,
+        'Actual_Default': 'Yes' if actual == 1 else 'No'
+    })
+
+results_df = pd.DataFrame(sample_results)
+print("\n" + results_df.to_string(index=False))
 
 print("\n" + "="*80)
 print("FINAL SUMMARY AND RECOMMENDATIONS")
@@ -877,14 +1042,21 @@ print(f"• Features used: {len(current_features['all_features'])}")
 print(f"• Features removed due to multicollinearity: {len(all_features) - len(current_features['all_features'])}")
 print(f"• Optimal regularization parameter: C = {best_balanced_model.named_steps['classifier'].C}")
 print(f"• Final model ROC AUC: {roc_auc_score(y_test, y_pred_proba_balanced):.3f}")
+print(f"• Custom class weights applied: {custom_class_weights}")
+
+print(f"\n🔧 MODEL IMPROVEMENTS:")
+print(f"• ✅ Proactive Financial Health Score feature added")
+print(f"• ✅ Custom class weights (less punitive than 'balanced')")
+print(f"• ✅ Stronger regularization explored (C values: 0.01-5.0)")
+print(f"• ✅ Credit score calibration function implemented")
 
 print(f"\n🔧 MODEL CONFIGURATION:")
 print(f"• Algorithm: Logistic Regression with L2 regularization")
-print(f"• Class balancing: Balanced class weights")
+print(f"• Class balancing: Custom weights {custom_class_weights}")
 print(f"• Cross-validation: 3-fold stratified")
 print(f"• VIF threshold: ≤ 5.0 (multicollinearity removed)")
 
-if HAS_FAIRLEARN and features_needing_mitigation:
+if HAS_FAIRLEARN and 'features_needing_mitigation' in locals() and features_needing_mitigation:
     print(f"\n⚖️  FAIRNESS CONFIGURATION:")
     print(f"• Fairness threshold: {fairness_threshold}")
     print(f"• Mitigation applied for: {features_needing_mitigation}")
@@ -893,11 +1065,12 @@ if HAS_FAIRLEARN and features_needing_mitigation:
 print(f"\n📁 DELIVERABLES:")
 print(f"• Model file: {model_path}")
 print(f"• Model metadata: {metadata_path}")
-if HAS_FAIRLEARN:
+if HAS_FAIRLEARN and 'report_path' in locals():
     print(f"• Fairness audit report: {report_path}")
 print(f"• Pipeline includes: Preprocessor + Trained Classifier")
 if hasattr(model_to_save, 'fairness_postprocessors'):
     print(f"• Fairness-aware wrapper with bias mitigation")
+print(f"• Credit score calibration function included")
 print(f"• Ready for production deployment")
 
 # Performance comparison
@@ -908,7 +1081,12 @@ print(f"{'ROC AUC':<15} {roc_auc_score(y_test, y_pred_proba_sensitive):<12.3f} {
 print(f"{'Precision':<15} {precision_score(y_test, y_pred_sensitive, zero_division=0):<12.3f} {precision_score(y_test, y_pred_balanced, zero_division=0):<12.3f} {precision_score(y_test, y_pred_balanced, zero_division=0) - precision_score(y_test, y_pred_sensitive, zero_division=0):<12.3f}")
 print(f"{'Recall':<15} {recall_score(y_test, y_pred_sensitive, zero_division=0):<12.3f} {recall_score(y_test, y_pred_balanced, zero_division=0):<12.3f} {recall_score(y_test, y_pred_balanced, zero_division=0) - recall_score(y_test, y_pred_sensitive, zero_division=0):<12.3f}")
 
-print(f"\n✅ TRAINING COMPLETE!")
-print("The final model has been successfully trained, validated, and serialized.")
+print(f"\n✅ REFACTORING COMPLETE!")
+print("The model has been successfully refactored with all four adjustments:")
+print("1. ✅ Proactive Financial Health Score feature created")
+print("2. ✅ Custom class weights applied (less aggressive than 'balanced')")
+print("3. ✅ Regularization hyperparameter tuning adjusted")
+print("4. ✅ Credit score calibration function implemented with demonstration")
+print("\nThe model is now less strict and better aligned with human expert judgment.")
 if hasattr(model_to_save, 'fairness_postprocessors'):
     print("The model includes fairness-aware post-processing to ensure equitable treatment across sensitive groups.")
