@@ -59,51 +59,51 @@ export interface FormData {
 type ViewType = 'loan-process' | 'applicants-list' | 'applicant-overview';
 
 // Mock applicants data (can be replaced with API calls later)
-const mockApplicants: Applicant[] = [
-  {
-    id: '1',
-    name: 'Juan dela Cruz',
-    brgyCity: 'Manila',
-    email: 'juan.delacruz@example.com',
-    loanProduct: 'Regular Loan',
-    loanAmount: '₱50,000',
-    status: 'pending',
-    formData: {
-      personal: {
-        fullName: 'Juan dela Cruz',
-        contactNo: '09123456789',
-        address: '123 Main St, Manila',
-        headOfHousehold: 'Self',
-        dependents: '3',
-        yearsLivingHere: '5 years',
-        housingStatus: 'Owned',
-      },
-      employee: {
-        companyName: 'ABC Corporation',
-        sector: 'Manufacturing',
-        position: 'Supervisor',
-        employmentDuration: '5 years',
-        salary: '₱25,000',
-        typeOfSalary: 'Monthly',
-      },
-      other: {
-        communityPosition: 'Barangay Council',
-        paluwagaParticipation: 'Yes',
-        otherIncomeSources: 'Small business',
-        disasterPreparednessStrategy: 'Emergency fund',
-      },
-      coMaker: {
-        fullName: 'Maria Santos',
-        contactNo: '09198765432',
-        address: '456 Oak Ave, Manila',
-        howManyMonthsYears: '3 years',
-        salary: '₱20,000',
-        relationshipWithApplicant: 'Sister',
-      },
-    },
-  },
-  // Add more mock data as needed
-];
+// const mockApplicants: Applicant[] = [
+//   {
+//     id: '1',
+//     name: 'Juan dela Cruz',
+//     brgyCity: 'Manila',
+//     email: 'juan.delacruz@example.com',
+//     loanProduct: 'Regular Loan',
+//     loanAmount: '₱50,000',
+//     status: 'pending',
+//     formData: {
+//       personal: {
+//         fullName: 'Juan dela Cruz',
+//         contactNo: '09123456789',
+//         address: '123 Main St, Manila',
+//         headOfHousehold: 'Self',
+//         dependents: '3',
+//         yearsLivingHere: '5 years',
+//         housingStatus: 'Owned',
+//       },
+//       employee: {
+//         companyName: 'ABC Corporation',
+//         sector: 'Manufacturing',
+//         position: 'Supervisor',
+//         employmentDuration: '5 years',
+//         salary: '₱25,000',
+//         typeOfSalary: 'Monthly',
+//       },
+//       other: {
+//         communityPosition: 'Barangay Council',
+//         paluwagaParticipation: 'Yes',
+//         otherIncomeSources: 'Small business',
+//         disasterPreparednessStrategy: 'Emergency fund',
+//       },
+//       coMaker: {
+//         fullName: 'Maria Santos',
+//         contactNo: '09198765432',
+//         address: '456 Oak Ave, Manila',
+//         howManyMonthsYears: '3 years',
+//         salary: '₱20,000',
+//         relationshipWithApplicant: 'Sister',
+//       },
+//     },
+//   },
+//   // Add more mock data as needed
+// ];
 
 export default function App() {
   const { user, loading, error } = useAuth();
@@ -147,7 +147,7 @@ export default function App() {
   const [loanResult, setLoanResult] = useState<any>(null);
 
   // Applicants state
-  const [applicants, setApplicants] = useState<Applicant[]>(mockApplicants);
+  const [applicants, setApplicants] = useState<Applicant[]>([]);
   const [selectedApplicant, setSelectedApplicant] = useState<Applicant | null>(null);
 
   const handleToggleView = () => {

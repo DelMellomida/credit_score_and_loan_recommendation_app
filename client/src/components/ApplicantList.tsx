@@ -40,6 +40,7 @@ export interface Applicant {
   loanAmount: string;
   status: 'pending' | 'approved' | 'denied' | 'cancelled';
   formData: any;
+  timestamp: string;  // ISO string timestamp
 }
 
 interface ApplicantsListProps {
@@ -59,6 +60,13 @@ export function ApplicantsList({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applicants, setApplicants] = useState<Applicant[]>([]);
+  const [totalStats, setTotalStats] = useState({
+    total: 0,
+    approved: 0,
+    denied: 0,
+    cancelled: 0,
+    pending: 0
+  });
   const itemsPerPage = 6;
 
   // Debug logs
@@ -81,20 +89,29 @@ export function ApplicantsList({
         hasToken: !!token
       });
 
-      // Get paginated data with metadata
-      const { data, total, pages } = await getAllApplications(token, currentPage, itemsPerPage);
+      // Get paginated data with metadata and counts (already sorted by timestamp from backend)
+      const { data, total, pages, counts } = await getAllApplications(token, currentPage, itemsPerPage);
       
       // Log received data
       console.log('Received applications:', {
         currentPage,
         receivedCount: data.length,
         total,
-        totalPages: pages
+        totalPages: pages,
+        counts,
+        latestTimestamp: data[0]?.timestamp
       });
 
-      // Update states
+      // Update states with paginated data and total counts
       setApplicants(data);
       setTotalPages(pages);
+      setTotalStats({
+        total: counts.total,
+        approved: counts.approved,
+        denied: counts.denied,
+        cancelled: counts.cancelled,
+        pending: counts.pending
+      });
 
     } catch (error) {
       console.error('Failed to fetch applications:', error);
@@ -212,11 +229,12 @@ export function ApplicantsList({
     }
   };
 
-  // Calculate summary counts
-  const totalApplicants = applicants.length;
-  const approvedCount = applicants.filter(a => a.status === 'approved').length;
-  const deniedCount = applicants.filter(a => a.status === 'denied').length;
-  const cancelledCount = applicants.filter(a => a.status === 'cancelled').length;
+  // Use the total stats for summary counts
+  const totalApplicants = totalStats.total;
+  const approvedCount = totalStats.approved;
+  const deniedCount = totalStats.denied;
+  const cancelledCount = totalStats.cancelled;
+  const pendingCount = totalStats.pending;
 
   // Filter applicants based on search query and status
   const filteredApplicants = useMemo(() => {
@@ -276,12 +294,21 @@ export function ApplicantsList({
   return (
     <div className="h-full flex flex-col gap-6 overflow-hidden">
       {/* Summary Cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         <Card className="bg-blue-50 border-blue-200">
           <CardContent className="p-4">
             <div className="text-center">
               <p className="text-sm text-blue-600 mb-1">Total Applicants</p>
               <p className="text-3xl text-blue-700">{totalApplicants}</p>
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card className="bg-yellow-50 border-yellow-200">
+          <CardContent className="p-4">
+            <div className="text-center">
+              <p className="text-sm text-yellow-600 mb-1">Pending</p>
+              <p className="text-3xl text-yellow-700">{pendingCount}</p>
             </div>
           </CardContent>
         </Card>
@@ -325,107 +352,36 @@ export function ApplicantsList({
         </Card>
       )}
 
-      {/* Search Bar and Pagination Row */}
-      <div className="flex items-center justify-between gap-4">
-        {/* Search and Filter Section */}
-        <div className="flex gap-4 flex-1">
-          {/* Status Filter */}
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Filter by status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectLabel>Application Status</SelectLabel>
-                <SelectItem value="all">All Applications</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="denied">Denied</SelectItem>
-                <SelectItem value="cancelled">Cancelled</SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+      {/* Search Bar Row */}
+      <div className="flex gap-4">
+        {/* Status Filter */}
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Filter by status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectLabel>Application Status</SelectLabel>
+              <SelectItem value="all">All Applications</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="approved">Approved</SelectItem>
+              <SelectItem value="denied">Denied</SelectItem>
+              <SelectItem value="cancelled">Cancelled</SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
 
-          {/* Search Bar */}
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              type="text"
-              placeholder="Search by name, email, loan product, or amount..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
-          </div>
+        {/* Search Bar */}
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Input
+            type="text"
+            placeholder="Search by name, email, loan product, or amount..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
         </div>
-
-        {/* Pagination - show if we have pages to navigate */}
-        {totalPages > 1 && (
-          <Pagination>
-            <PaginationContent>
-              <PaginationItem>
-                <PaginationPrevious
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  className={currentPage <= 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer hover:bg-gray-100'}
-                  title={currentPage <= 1 ? 'No previous page' : 'Go to previous page'}
-                />
-              </PaginationItem>
-              
-              {(() => {
-                const pages = [];
-                
-                if (totalPages <= 5) {
-                  // Show all pages if 5 or fewer
-                  for (let i = 1; i <= totalPages; i++) {
-                    pages.push(i);
-                  }
-                } else {
-                  // Show smart pagination with ellipses
-                  if (currentPage <= 3) {
-                    // Near the start: 1 2 3 4 ...
-                    for (let i = 1; i <= Math.min(4, totalPages); i++) {
-                      pages.push(i);
-                    }
-                    if (totalPages > 4) pages.push('...');
-                  } else if (currentPage >= totalPages - 2) {
-                    // Near the end: ... 7 8 9 10
-                    pages.push('...');
-                    for (let i = Math.max(1, totalPages - 3); i <= totalPages; i++) {
-                      pages.push(i);
-                    }
-                  } else {
-                    // In the middle: ... 4 5 6 ...
-                    pages.push('...', currentPage - 1, currentPage, currentPage + 1, '...');
-                  }
-                }
-                
-                return pages.map((page, idx) => (
-                  <PaginationItem key={`${page}-${idx}`}>
-                    {page === '...' ? (
-                      <span className="px-4 py-2">...</span>
-                    ) : (
-                      <PaginationLink
-                        onClick={() => setCurrentPage(page as number)}
-                        isActive={currentPage === page}
-                        className="cursor-pointer"
-                      >
-                        {page}
-                      </PaginationLink>
-                    )}
-                  </PaginationItem>
-                ));
-              })()}
-              
-              <PaginationItem>
-                <PaginationNext
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  className={currentPage >= totalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer hover:bg-gray-100'}
-                  title={currentPage >= totalPages ? 'No next page' : 'Go to next page'}
-                />
-              </PaginationItem>
-            </PaginationContent>
-          </Pagination>
-        )}
       </div>
 
       {/* Table */}
@@ -535,6 +491,76 @@ export function ApplicantsList({
           </TableBody>
         </Table>
       </Card>
+
+      {/* Pagination - show if we have pages to navigate */}
+      {totalPages > 1 && (
+        <div className="flex justify-center mt-4">
+          <Pagination>
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  className={currentPage <= 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer hover:bg-gray-100'}
+                  title={currentPage <= 1 ? 'No previous page' : 'Go to previous page'}
+                />
+              </PaginationItem>
+              
+              {(() => {
+                const pages = [];
+                
+                if (totalPages <= 5) {
+                  // Show all pages if 5 or fewer
+                  for (let i = 1; i <= totalPages; i++) {
+                    pages.push(i);
+                  }
+                } else {
+                  // Show smart pagination with ellipses
+                  if (currentPage <= 3) {
+                    // Near the start: 1 2 3 4 ...
+                    for (let i = 1; i <= Math.min(4, totalPages); i++) {
+                      pages.push(i);
+                    }
+                    if (totalPages > 4) pages.push('...');
+                  } else if (currentPage >= totalPages - 2) {
+                    // Near the end: ... 7 8 9 10
+                    pages.push('...');
+                    for (let i = Math.max(1, totalPages - 3); i <= totalPages; i++) {
+                      pages.push(i);
+                    }
+                  } else {
+                    // In the middle: ... 4 5 6 ...
+                    pages.push('...', currentPage - 1, currentPage, currentPage + 1, '...');
+                  }
+                }
+                
+                return pages.map((page, idx) => (
+                  <PaginationItem key={`${page}-${idx}`}>
+                    {page === '...' ? (
+                      <span className="px-4 py-2">...</span>
+                    ) : (
+                      <PaginationLink
+                        onClick={() => setCurrentPage(page as number)}
+                        isActive={currentPage === page}
+                        className="cursor-pointer"
+                      >
+                        {page}
+                      </PaginationLink>
+                    )}
+                  </PaginationItem>
+                ));
+              })()}
+              
+              <PaginationItem>
+                <PaginationNext
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  className={currentPage >= totalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer hover:bg-gray-100'}
+                  title={currentPage >= totalPages ? 'No next page' : 'Go to next page'}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        </div>
+      )}
     </div>
   );
 }

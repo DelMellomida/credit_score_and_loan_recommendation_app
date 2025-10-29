@@ -259,11 +259,20 @@ export async function getMyApplications(token?: string) {
   return response.map(transformToApplicant);
 }
 
+interface StatusCounts {
+  total: number;
+  approved: number;
+  denied: number;
+  cancelled: number;
+  pending: number;
+}
+
 interface PaginatedResponse<T> {
   data: T[];
   total: number;
   page: number;
   pages: number;
+  counts: StatusCounts;
 }
 
 export async function getAllApplications(
@@ -295,6 +304,7 @@ export async function getAllApplications(
       total: number;
       page: number;
       pages: number;
+      counts: StatusCounts;
     }>(`/loans/applications?skip=${skip}&limit=${pageSize}`, {
       method: 'GET',
       headers
@@ -313,7 +323,8 @@ export async function getAllApplications(
       data: response.data.map(transformToApplicant),
       total: response.total,
       page: response.page,
-      pages: response.pages
+      pages: response.pages,
+      counts: response.counts
     };
   } catch (error) {
     console.error('Error fetching applications:', {

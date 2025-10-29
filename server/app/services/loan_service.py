@@ -192,8 +192,8 @@ class LoanApplicationService:
                 total = await LoanApplication.find(query).count()
                 logger.info(f"Total count: {total}")
                 
-                # Get paginated results
-                applications = await LoanApplication.find(query).skip(skip).limit(limit).to_list()
+                # Get paginated results with sorting by timestamp in descending order (newest first)
+                applications = await LoanApplication.find(query).sort([("timestamp", -1)]).skip(skip).limit(limit).to_list()
                 logger.info(f"Retrieved {len(applications)} applications")
                 
             except Exception as e:
@@ -245,11 +245,22 @@ class LoanApplicationService:
                 raise RuntimeError(f"Data formatting failed: {str(e)}")
             
             logger.info(f"Successfully formatted {len(formatted_applications)} applications")
+            # Get counts for all applications, not just the current page
+            all_applications = await LoanApplication.find(query).to_list()
+            status_counts = {
+                "total": total,
+                "approved": len([a for a in all_applications if a.status == "Approved"]),
+                "denied": len([a for a in all_applications if a.status == "Denied"]),
+                "cancelled": len([a for a in all_applications if a.status == "Cancelled"]),
+                "pending": len([a for a in all_applications if a.status == "Pending"])
+            }
+            
             return {
                 "data": formatted_applications,
                 "total": total,
                 "page": skip // limit + 1 if limit > 0 else 1,
-                "pages": (total + limit - 1) // limit if limit > 0 else 1
+                "pages": (total + limit - 1) // limit if limit > 0 else 1,
+                "counts": status_counts
             }
             
         except Exception as e:

@@ -105,6 +105,7 @@ export function transformToApplicant(application: ApplicationResponse & { docume
     loanProduct: `Job: ${applicantInfo.job || 'N/A'}`,
     loanAmount: `${salaryDisplay} | Score: ${creditScore} (${recommendationCount} recommendations)`,
     status: status,
-    formData: formData
+    formData: formData,
+    timestamp: application.timestamp || new Date().toISOString() // Include the timestamp
   };
 }
