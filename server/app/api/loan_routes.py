@@ -455,19 +455,82 @@ async def get_loan_application(
 
 @router.put("/applications/{application_id}", response_model=Dict[str, Any])
 async def update_loan_application(
-    application_id: UUID,
-    update_data: Dict[str, Any],
+    application_id: str,  # Changed from UUID to str for MongoDB ObjectId
+    request_data: str = Form(...),
+    profilePhoto: Optional[UploadFile] = File(None),
+    validId: Optional[UploadFile] = File(None),
+    brgyCert: Optional[UploadFile] = File(None),
+    eSignaturePersonal: Optional[UploadFile] = File(None),
+    payslip: Optional[UploadFile] = File(None),
+    companyId: Optional[UploadFile] = File(None),
+    proofOfBilling: Optional[UploadFile] = File(None),
+    eSignatureCoMaker: Optional[UploadFile] = File(None),
     current_user: Dict = Depends(get_current_active_user),
     service: LoanApplicationService = Depends(get_loan_application_service)
 ):
     """
-    Update loan application data.
+    Update loan application data and handle document updates.
     """
     try:
-        logger.info(f"Updating loan application {application_id}")
-        application = await service.update_loan_application(application_id, update_data)
-
+        try:
+            data_dict = json.loads(request_data)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid JSON format: {str(e)}"
+            )
+        
+        # Get existing application
+        application = await service.get_loan_application_by_mongo_id(application_id)
         if not application:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Loan application with ID {application_id} not found"
+            )
+
+        # Update document files if provided
+        document_files = {}
+        if profilePhoto:
+            document_files["profile_photo"] = profilePhoto
+        if validId:
+            document_files["valid_id"] = validId
+        if brgyCert:
+            document_files["brgy_cert"] = brgyCert
+        if eSignaturePersonal:
+            document_files["e_signature_personal"] = eSignaturePersonal
+        if payslip:
+            document_files["payslip"] = payslip
+        if companyId:
+            document_files["company_id"] = companyId
+        if proofOfBilling:
+            document_files["proof_of_billing"] = proofOfBilling
+        if eSignatureCoMaker:
+            document_files["e_signature_comaker"] = eSignatureCoMaker
+
+        # If there are document updates, process them
+        if document_files:
+            from app.workers.document_handler import process_document_updates
+            document_urls = await process_document_updates(
+                str(application.application_id),
+                document_files,
+                current_user
+            )
+
+            # Update document URLs in database
+            from app.database.models.document_model import ApplicationDocument
+            await ApplicationDocument.find_one(
+                ApplicationDocument.application_id == str(application.application_id)
+            ).update({"$set": document_urls})
+
+        # Update application data and run reassessment
+        updated_application = await service.update_loan_application(
+            application.application_id, 
+            data_dict,
+            rerun_assessment=True
+        )
+
+        if not updated_application:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Loan application with ID {application_id} not found"
@@ -476,16 +539,18 @@ async def update_loan_application(
         return {
             "message": "Application updated successfully",
             "application_id": str(application_id),
-            "updated_at": application.timestamp.isoformat(),
+            "updated_at": updated_application.timestamp.isoformat(),
             "application": {
-                "_id": {"$oid": str(application.id)},
-                "application_id": str(application.application_id),
-                "timestamp": application.timestamp.isoformat(),
-                "status": application.status,
-                "applicant_info": application.applicant_info.model_dump(),
-                "comaker_info": application.comaker_info.model_dump(),
-                "model_input_data": application.model_input_data.model_dump(),
-                "loan_officer_id": application.loan_officer_id
+                "_id": {"$oid": str(updated_application.id)},
+                "application_id": str(updated_application.application_id),
+                "timestamp": updated_application.timestamp.isoformat(),
+                "status": updated_application.status,
+                "applicant_info": updated_application.applicant_info.model_dump(),
+                "comaker_info": updated_application.comaker_info.model_dump(),
+                "model_input_data": updated_application.model_input_data.model_dump(),
+                "loan_officer_id": updated_application.loan_officer_id,
+                "prediction_result": updated_application.prediction_result.model_dump() if updated_application.prediction_result else None,
+                "ai_explanation": updated_application.ai_explanation.model_dump() if updated_application.ai_explanation else None
             }
         }
         

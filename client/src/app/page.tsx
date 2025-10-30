@@ -10,7 +10,6 @@ import { ApplicantOverview } from '../components/ApplicantOverview';
 import { getLoanApplication, updateLoanApplication } from '../lib/api';
 import { transformToApplicant } from '../lib/transformData';
 import type { ApplicationResponse } from '../lib/types';
-import { Toaster } from '../components/ui/sonner';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 
@@ -356,8 +355,6 @@ export default function App() {
           />
         )}
       </div>
-      
-      <Toaster position="top-center" />
     </div>
   );
 }

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth_routes import router as auth_router
 from app.api.loan_routes import router as loan_router
 from app.api.document_routes import router as document_router
+from app.api.model_routes import router as model_router
 from contextlib import asynccontextmanager
 from app.database.connection import init_db
 from app.core.config import settings
@@ -32,6 +33,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(loan_router)
 app.include_router(document_router)
+app.include_router(model_router)
 
 @app.get("/")
 async def root():

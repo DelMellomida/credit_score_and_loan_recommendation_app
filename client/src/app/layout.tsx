@@ -23,18 +23,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   // Import AuthProvider and wrap children
-  // ...existing code...
   // Import here to avoid SSR issues
   const AuthProvider = require('../context/AuthContext').AuthProvider;
-  const ToastProvider = require('../context/ToastContext').ToastProvider;
+  const { Toaster } = require('../components/ui/sonner');
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <ToastProvider>
-          <AuthProvider>
-            {children}
-          </AuthProvider>
-        </ToastProvider>
+        <AuthProvider>
+          {children}
+          <Toaster />
+        </AuthProvider>
       </body>
     </html>
   );

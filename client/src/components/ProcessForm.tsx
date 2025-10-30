@@ -9,7 +9,7 @@ import { CoMakerDataForm } from "./forms/CoMakerDataForm";
 import type { FormData } from "../app/page";
 import { transformLoanFormData } from "../lib/loanTransform";
 import { createLoanApplication, uploadDocuments } from "../lib/api";
-import { useToast } from '../context/ToastContext';
+import { toast } from 'sonner';
 
 export function ProcessForm({
   formData,
@@ -26,7 +26,7 @@ export function ProcessForm({
 }) {
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { showToast } = useToast();
+  // Using sonner toast directly
 
   const steps = [
     { number: 1, title: "Personal Data" },
@@ -97,11 +97,11 @@ export function ProcessForm({
       const result = (await createLoanApplication(formDataToSend, token)) as ApplicationResponse;
 
   setLoanResult(result);
-  showToast('Loan application created successfully', 'success');
+  toast.success('Loan application created successfully');
     } catch (err: any) {
       console.error('Create application failed:', err);
   const message = err?.message || (typeof err === 'string' ? err : 'Failed to create loan application');
-  showToast(`Error: ${message}`, 'error');
+  toast.error('Error', { description: message });
       setLoanResult(null);
     } finally {
       setIsSubmitting(false);

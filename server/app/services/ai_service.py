@@ -109,41 +109,81 @@ class AIExplainabilityService:
 
     def _generate_technical_explanation(self, analysis_data: Dict[str, Any]) -> str:
         return (
-            "You are an expert data analyst. Explain this credit score analysis in technical terms using exactly 100 words. "
-            "Focus on the statistical model, feature engineering, and validation metrics. "
-            "Use professional terminology appropriate for data science peers.\n\n"
+            "You are an expert data analyst. Provide a bulleted analysis of this credit score in technical terms, not exceeding 100 words. "
+            "Instructions:\n"
+            "- Create 4-5 key points.\n"
+            "- **Start each point on a new line with the '•' character.**\n"
+            "- Do not use any other bullet format (like '*' or '-').\n\n"
+            "Include 4-5 key points focusing on:\n"
+            "• Statistical model performance\n"
+            "• Feature engineering insights\n"
+            "• Key validation metrics\n"
+            "• Model reliability indicators\n\n"
+            "Use professional data science terminology. Ensure the entire response is a bulleted list and under 50 words.\n\n"
             f"Analysis Data: {json.dumps(analysis_data, default=str)}"
         )
 
     def _generate_business_explanation(self, analysis_data: Dict[str, Any]) -> str:
         return (
-            "You are a senior loan officer. Explain this credit score analysis in business terms using exactly 100 words. "
-            "Focus on operational impact, loan pricing, risk management, and portfolio implications. "
-            "Use terminology appropriate for banking executives and decision makers.\n\n"
+            "You are a senior loan officer. Provide a bulleted analysis of this credit score in business terms, not exceeding 100 words. "
+            "Instructions:\n"
+            "- Create 4-5 key points.\n"
+            "- **Start each point on a new line with the '•' character.**\n"
+            "- Do not use any other bullet format (like '*' or '-').\n\n"
+            "Include 4-5 key points focusing on:\n"
+            "• Operational impact on lending\n"
+            "• Risk-adjusted pricing implications\n"
+            "• Portfolio risk considerations\n"
+            "• Business recommendations\n\n"
+            "Use terminology suitable for banking executives. Ensure the entire response is a bulleted list and under 50 words.\n\n"
             f"Analysis Data: {json.dumps(analysis_data, default=str)}"
         )
 
     def _generate_customer_explanation(self, analysis_data: Dict[str, Any]) -> str:
         return (
-            "You are explaining to a loan applicant. Explain this credit score analysis in simple, supportive terms using exactly 100 words. "
-            "Focus on what the score means for them, how it was calculated, and that improvement is possible. "
-            "Use friendly, non-technical language that reassures and educates.\n\n"
+            "You are explaining to a loan applicant. Provide a bulleted explanation of their credit score in simple terms, not exceeding 100 words. "
+            "Instructions:\n"
+            "- Create 4-5 key points.\n"
+            "- **Start each point on a new line with the '•' character.**\n"
+            "- Do not use any other bullet format (like '*' or '-').\n\n"
+            "Include 4-5 key points focusing on:\n"
+            "• What their score means\n"
+            "• Main factors affecting their score\n"
+            "• Positive aspects of their application\n"
+            "• Areas for potential improvement\n\n"
+            "Use friendly, supportive language. Ensure the entire response is a bulleted list and under 50 words.\n\n"
             f"Analysis Data: {json.dumps(analysis_data, default=str)}"
         )
 
     def _generate_risk_factors_explanation(self, analysis_data: Dict[str, Any]) -> str:
         return (
-            "You are a risk assessment expert. Explain the default risk factors in this analysis using exactly 100 words. "
-            "Focus on key risk indicators, cultural financial practices, and both positive and negative factors. "
-            "Use professional risk management terminology.\n\n"
+            "You are a risk assessment expert. Provide a bulleted analysis of the default risk factors, not exceeding 100 words. "
+            "Instructions:\n"
+            "- Create 4-5 key points.\n"
+            "- **Start each point on a new line with the '•' character.**\n"
+            "- Do not use any other bullet format (like '*' or '-').\n\n"
+            "Include 4-5 key points focusing on:\n"
+            "• Primary risk indicators\n"
+            "• Cultural financial practices impact\n"
+            "• Positive risk mitigants\n"
+            "• Areas requiring attention\n\n"
+            "Use professional risk management terminology. Ensure the entire response is a bulleted list and under 50 words.\n\n"
             f"Analysis Data: {json.dumps(analysis_data, default=str)}"
         )
 
     def _generate_recommendations(self, analysis_data: Dict[str, Any]) -> str:
         return (
-            "You are a financial advisor. Provide actionable recommendations to improve this credit score using exactly 100 words. "
-            "Focus on specific, practical steps the applicant can take. Include both formal and informal financial practices. "
-            "Use encouraging, advisory language with clear action items.\n\n"
+            "You are a financial advisor. Provide bulleted recommendations to improve this credit score, not exceeding 100 words. "
+            "Instructions:\n"
+            "- Create 4-5 key points.\n"
+            "- **Start each point on a new line with the '•' character.**\n"
+            "- Do not use any other bullet format (like '*' or '-').\n\n"
+            "Include 4-5 key points focusing on:\n"
+            "• Immediate actions to take\n"
+            "• Medium-term financial practices\n"
+            "• Cultural financial strengths to leverage\n"
+            "• Specific credit-building strategies\n\n"
+            "Use encouraging, practical language. Ensure the entire response is a bulleted list and under 50 words.\n\n"
             f"Analysis Data: {json.dumps(analysis_data, default=str)}"
         )
 

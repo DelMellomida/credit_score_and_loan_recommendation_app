@@ -21,7 +21,7 @@ export function transformToApplicant(application: ApplicationResponse & { docume
 
   // Extract city from address if available
   // Defensive access for applicant_info and address
-  const applicantInfo = application.applicant_info || { full_name: '', contact_number: '', address: '', salary: '', job: '' };
+  const applicantInfo = application.applicant_info || { full_name: '', contact_number: '', address: '', salary: '0', job: '' };
   const addressParts = (applicantInfo.address || '').split(',');
   const brgyCity = addressParts.length > 1 ? addressParts[1].trim() : (addressParts[0] || '').trim();
 
@@ -64,7 +64,7 @@ export function transformToApplicant(application: ApplicationResponse & { docume
       sector: modelData.Employment_Sector || 'Other',
       position: applicantInfo.job || 'Self-employed',
       employmentDuration: formatDuration(modelData.Employment_Tenure_Months) || 'Less than 1 year',
-      salary: formatCurrency(modelData.Net_Salary_Per_Cutoff) || formatCurrency(application.applicant_info.salary) || 'Information not provided',
+      salary: (application.applicant_info.salary || modelData.Net_Salary_Per_Cutoff?.toString() || '0').toString(),
       typeOfSalary: modelData.Salary_Frequency || 'Monthly'
     },
     other: {
@@ -92,7 +92,7 @@ export function transformToApplicant(application: ApplicationResponse & { docume
 
   // Format salary with proper currency display
   const salaryDisplay = application.model_input_data?.Net_Salary_Per_Cutoff 
-    ? `₱${application.model_input_data.Net_Salary_Per_Cutoff.toLocaleString()}` 
+    ? `₱${application.model_input_data.Net_Salary_Per_Cutoff.toString()}` 
     : (applicantInfo.salary && typeof applicantInfo.salary === 'string' && applicantInfo.salary.startsWith('₱')) 
       ? applicantInfo.salary 
       : (applicantInfo.salary ? `₱${applicantInfo.salary}` : '₱0');

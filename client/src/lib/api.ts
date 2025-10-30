@@ -57,7 +57,26 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     });
 
     try {
-      const response = await fetch(requestUrl, {
+      // Add comprehensive cache-busting for document URLs
+      const isDocumentRequest = endpoint.startsWith('/documents/');
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substring(7);
+      const url = isDocumentRequest 
+        ? `${requestUrl}${requestUrl.includes('?') ? '&' : '?'}t=${timestamp}&noCache=${random}&v=${timestamp}`
+        : requestUrl;
+
+      // Add cache control headers for document requests
+      if (isDocumentRequest) {
+        // Set strict cache control headers
+        headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0';
+        headers['Pragma'] = 'no-cache';
+        headers['Expires'] = '0';
+        headers['Surrogate-Control'] = 'no-store';
+        headers['If-None-Match'] = `"${timestamp}-${random}"`; // Unique ETag
+        headers['If-Modified-Since'] = new Date(0).toUTCString(); // Force revalidation
+      }
+      
+      const response = await fetch(url, {
         ...options,
         headers,
         credentials: 'include',
@@ -530,11 +549,16 @@ export async function uploadDocuments(applicationId: string, files: FormData, to
     }
   }
 
-  return request(`/documents?application_id=${applicationId}`, {
+  // Ensure we have a fresh URL each time
+  const timestamp = Date.now();
+  return request(`/documents?application_id=${applicationId}&t=${timestamp}`, {
     method: 'POST',
     body: files,
     headers: {
-      'Authorization': `Bearer ${cleanToken}`
+      'Authorization': `Bearer ${cleanToken}`,
+      'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
+      'Pragma': 'no-cache',
+      'Expires': '0'
     }
   });
 }
@@ -597,10 +621,16 @@ export async function deleteDocument(documentId: string, token?: string) {
   });
 }
 
-export async function deleteSingleFile(documentId: string, field: string, token?: string) {
-  return request(`/documents/${documentId}/${field}`, {
+export async function deleteSingleFile(applicationId: string, field: string, token?: string) {
+  const timestamp = Date.now();
+  return request(`/documents/application/${applicationId}/file/${field}?t=${timestamp}`, {
     method: 'DELETE',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: token ? {
+      Authorization: `Bearer ${token}`,
+      'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    } : {},
   });
 }
 
@@ -614,35 +644,21 @@ export async function refreshApplicationDocumentUrls(
     throw new Error('Authentication required');
   }
 
+  const timestamp = Date.now(); // Add timestamp to prevent caching
   const queryString = documentTypes?.length 
-    ? `?document_types=${documentTypes.join(',')}`
-    : '';
+    ? `?document_types=${documentTypes.join(',')}&t=${timestamp}`
+    : `?t=${timestamp}`;
 
   return request<Record<string, string | null>>(
     `/documents/application/${applicationId}/refresh-urls${queryString}`,
     {
       method: 'GET',
-      headers: { Authorization: `Bearer ${token}` }
-    }
-  );
-}
-
-export async function updateApplicationDocumentUrls(
-  applicationId: string,
-  documentUrls: Record<string, string>,
-  token?: string
-) {
-  if (!token) {
-    console.error('No token provided to updateApplicationDocumentUrls');
-    throw new Error('Authentication required');
-  }
-
-  return request<Record<string, string>>(
-    `/documents/application/${applicationId}/update-urls`,
-    {
-      method: 'PUT',
-      body: JSON.stringify({ documentUrls }),
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { 
+        Authorization: `Bearer ${token}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
     }
   );
 }

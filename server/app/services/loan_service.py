@@ -305,7 +305,30 @@ class LoanApplicationService:
             logger.error(f"Error updating application status: {e}")
             raise RuntimeError(f"Failed to update application status: {str(e)}")
 
-    async def update_loan_application(self, application_id: UUID, update_data: Dict[str, Any]) -> Optional[LoanApplication]:
+    async def get_loan_application_by_mongo_id(self, mongo_id: str) -> Optional[LoanApplication]:
+        try:
+            from bson import ObjectId
+            logger.info(f"Retrieving loan application with mongo ID: {mongo_id}")
+            
+            application = await LoanApplication.find_one({"_id": ObjectId(mongo_id)})
+            
+            if application:
+                logger.info(f"Loan application {mongo_id} found")
+            else:
+                logger.warning(f"Loan application {mongo_id} not found")
+                
+            return application
+            
+        except Exception as e:
+            logger.error(f"Error retrieving loan application {mongo_id}: {e}")
+            raise RuntimeError(f"Failed to retrieve loan application: {str(e)}")
+
+    async def update_loan_application(
+        self, 
+        application_id: UUID, 
+        update_data: Dict[str, Any],
+        rerun_assessment: bool = False
+    ) -> Optional[LoanApplication]:
         """Update an existing loan application with new data."""
         try:
             logger.info(f"Updating loan application {application_id} with new data")
@@ -329,17 +352,22 @@ class LoanApplicationService:
                 for key, value in update_data['model_input_data'].items():
                     setattr(application.model_input_data, key, value)
 
-                # Re-run prediction with updated model input data
-                new_prediction = await self._run_prediction(application.model_input_data)
-                application.prediction_result = new_prediction
+                if rerun_assessment:
+                    # Re-run prediction with updated model input data
+                    new_prediction = await self._run_prediction(application.model_input_data)
+                    application.prediction_result = new_prediction
 
-                # Update recommendations if available
-                if self.recommendation_service:
-                    new_recommendations = self.recommendation_service.get_loan_recommendations(
-                        applicant_info=application.applicant_info,
-                        model_input_data=application.model_input_data.model_dump()
-                    )
-                    application.prediction_result.loan_recommendation = new_recommendations
+                    # Update recommendations if available
+                    if self.recommendation_service:
+                        new_recommendations = self.recommendation_service.get_loan_recommendations(
+                            applicant_info=application.applicant_info,
+                            model_input_data=application.model_input_data.model_dump()
+                        )
+                        application.prediction_result.loan_recommendation = new_recommendations
+
+                    # Generate new AI explanation
+                    if self.ai_service:
+                        await self._generate_and_save_explanation(application)
 
             # Save updates
             await application.save()

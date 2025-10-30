@@ -1,13 +1,13 @@
-import React, { useState } from 'react';
-import type { ReactElement } from 'react';
-import { Upload, ArrowLeft, X, FileText, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
-import { PositionField } from './forms/PositionField';
-import { validatePosition, Position } from '@/lib/positionValidation';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { ScrollArea } from './ui/scroll-area';
+import React, { useState, useEffect } from 'react';
+import { Upload, ArrowLeft, X, FileText, Trash2, ChevronLeft, ChevronRight, Save } from 'lucide-react';
+import { PositionField } from '@/components/forms/PositionField';
+import { validatePosition } from '@/lib/positionValidation';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { toast } from 'sonner';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,14 +19,20 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { Applicant } from './ApplicantList';
-import { FormData } from '@/lib/formTypes';
-import { transformToApplicant } from '../lib/transformData';
-import { useAuth } from '../context/AuthContext';
-import { deleteLoanApplication } from '@/lib/api';
-
-import { useEffect } from 'react';
-import { getApplicationDocuments, getLoanApplication, refreshApplicationDocumentUrls, updateApplicationDocumentUrls } from '@/lib/api';
+import { Applicant } from '@/components/ApplicantList';
+import { FormData as CustomFormData } from '@/lib/formTypes';
+import { transformToApplicant } from '@/lib/transformData';
+import { useAuth } from '@/context/AuthContext';
+import { 
+  deleteLoanApplication, 
+  uploadDocuments, 
+  updateLoanApplication,
+  getLoanApplication,
+  getApplicationDocuments,
+  refreshApplicationDocumentUrls,
+  deleteDocument,
+  deleteSingleFile 
+} from '@/lib/api';
 
 interface ApplicantOverviewProps {
   applicant: Applicant & { 
@@ -122,7 +128,7 @@ export function ApplicantOverview({
   });
   const { user } = useAuth();
   const [applicationData, setApplicationData] = useState<ApplicationData | null>(null);
-  const [editableData, setEditableData] = useState<FormData>(applicant.formData);
+  const [editableData, setEditableData] = useState<CustomFormData>(applicant.formData);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   // Accept both camelCase and snake_case initial values from passed applicant.documents
   const [profilePhoto, setProfilePhoto] = useState<string | null>(
@@ -153,6 +159,7 @@ export function ApplicantOverview({
   // application UUID (from applicationData.application_id) used to refresh signed URLs
   const [applicationUUID, setApplicationUUID] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<'recommendation' | 'prediction' | 'explanation'>('recommendation');
+  const [isSaving, setIsSaving] = useState(false);
 
   // Track image retry attempts to avoid infinite refresh loops for all document types
   const [imageRetries, setImageRetries] = useState<Record<string, number>>({
@@ -313,39 +320,36 @@ export function ApplicantOverview({
   const refreshSignedUrls = async (field?: 'profilePhoto' | 'idPhoto') => {
     if (!applicationUUID || !user?.token) return null;
     try {
-      // Check if URLs are expiring soon or already expired
-      const needsRefresh = field 
-        ? field === 'profilePhoto' 
-          ? !profilePhoto || isUrlExpiringSoon(profilePhoto)
-          : !idPhoto || isUrlExpiringSoon(idPhoto)
-        : Object.values(documentPreviews).some(url => url && isUrlExpiringSoon(url));
-
-      if (!needsRefresh) {
-        console.log('URLs are still valid, no refresh needed');
-        return null;
-      }
-
-      // If specific field requested, only refresh that type
+      // Always force refresh for the requested field or all fields
       const documentTypes = field 
         ? [field === 'profilePhoto' ? 'profile_photo' : 'valid_id']
         : undefined;
       
+      // Add timestamp to prevent browser caching
+      const timestamp = Date.now();
       const refreshed = await refreshApplicationDocumentUrls(
-        applicationUUID,
+        `${applicationUUID}?t=${timestamp}&noCache=${Math.random()}`,
         documentTypes,
         user.token
       );
+      
       if (!refreshed) return null;
 
       // Update profile/id specifically if present
       if (field === 'profilePhoto') {
         const profile = refreshed.profile_photo_url || refreshed.profile_photo || refreshed.profilePhoto;
-        if (profile) setProfilePhoto(profile);
+        if (profile) {
+          const urlWithCache = `${profile}${profile.includes('?') ? '&' : '?'}t=${timestamp}&noCache=${Math.random()}`;
+          setProfilePhoto(urlWithCache);
+        }
       } else if (field === 'idPhoto') {
         const id = refreshed.valid_id_url || refreshed.valid_id || refreshed.validId || refreshed.idPhoto;
-        if (id) setIdPhoto(id);
+        if (id) {
+          const urlWithCache = `${id}${id.includes('?') ? '&' : '?'}t=${timestamp}&noCache=${Math.random()}`;
+          setIdPhoto(urlWithCache);
+        }
       } else {
-        // General update of all previews
+        // General update of all previews with cache busting
         const previews = { ...documentPreviews };
         const mappings: Record<string, keyof typeof documentPreviews> = {
           'brgy_cert_url': 'brgyCert', 'brgy_cert': 'brgyCert',
@@ -355,27 +359,24 @@ export function ApplicantOverview({
           'proof_of_billing_url': 'proofOfBilling', 'proof_of_billing': 'proofOfBilling',
           'e_signature_comaker_url': 'eSignatureCoMaker', 'e_signature_comaker': 'eSignatureCoMaker'
         };
+        
         Object.entries(refreshed).forEach(([k, v]) => {
           if (!v) return;
-          if (['profile_photo_url','profile_photo','profilePhoto'].includes(k)) setProfilePhoto(v);
-          else if (['valid_id_url','valid_id','validId','idPhoto'].includes(k)) setIdPhoto(v);
-          else if (mappings[k]) previews[mappings[k]] = v;
+          
+          // Add cache busting parameters to each URL
+          const urlWithCache = `${v}${v.includes('?') ? '&' : '?'}t=${timestamp}&noCache=${Math.random()}`;
+          
+          if (['profile_photo_url','profile_photo','profilePhoto'].includes(k)) {
+            setProfilePhoto(urlWithCache);
+          } else if (['valid_id_url','valid_id','validId','idPhoto'].includes(k)) {
+            setIdPhoto(urlWithCache);
+          } else if (mappings[k]) {
+            previews[mappings[k]] = urlWithCache;
+          }
         });
         setDocumentPreviews(previews);
 
-        // Update the database with new URLs
-        try {
-          // Filter out null values and convert to Record<string, string>
-          const validUrls = Object.fromEntries(
-            Object.entries(refreshed)
-              .filter(([_, value]) => value !== null)
-          ) as Record<string, string>;
-          
-          await updateApplicationDocumentUrls(applicationUUID, validUrls, user.token);
-          console.log('Successfully updated document URLs in database');
-        } catch (error) {
-          console.error('Failed to update document URLs in database:', error);
-        }
+        // URLs are automatically stored in Supabase, no need to update the database
       }
       return refreshed;
     } catch (e) {
@@ -384,7 +385,7 @@ export function ApplicantOverview({
     }
   };
 
-  const handleInputChange = (section: keyof FormData, field: string, value: string) => {
+  const handleInputChange = (section: keyof CustomFormData, field: string, value: string) => {
     setEditableData(prev => ({
       ...prev,
       [section]: {
@@ -394,34 +395,353 @@ export function ApplicantOverview({
     }));
   };
 
-  const handleFileUpload = (type: 'profile' | 'id' | keyof typeof documents, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
-      console.log('File upload preview generated:', { type, fileName: file.name });
+  const handleDocumentUpdate = async (files: globalThis.FormData) => {
+    if (!user?.token || !applicationUUID) return;
+    
+    try {
+      // Upload the documents using application UUID
+      await uploadDocuments(applicationUUID, files, user.token);
       
-      if (type === 'profile') {
-        setProfilePhoto(result);
-      } else if (type === 'id') {
-        setIdPhoto(result);
-      } else {
-        setDocuments(prev => ({ ...prev, [type]: file }));
-        setDocumentPreviews(prev => ({ ...prev, [type]: result }));
+      // Add a delay to ensure the upload is complete
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Get fresh application data first
+      const applicationData = await getLoanApplication(applicant.id, user.token);
+      if (!applicationData) throw new Error("Failed to refresh application data");
+
+      // Force a fresh URL refresh
+      const refreshedUrls = await refreshApplicationDocumentUrls(
+        applicationUUID, 
+        undefined,
+        user.token,
+      );
+      console.log('Refreshed document URLs:', refreshedUrls);
+
+      if (refreshedUrls) {
+        // Update all document previews
+        const previews = { ...documentPreviews };
+        Object.entries(refreshedUrls).forEach(([key, value]) => {
+          if (!value || typeof value !== 'string') return;
+          
+          // Map snake_case keys to our state variables
+          if (['profile_photo_url', 'profile_photo', 'profilePhoto'].includes(key)) {
+            console.log('Updating profile photo URL:', value);
+            setProfilePhoto(value);
+          } else if (['valid_id_url', 'valid_id', 'idPhoto'].includes(key)) {
+            console.log('Updating ID photo URL:', value);
+            setIdPhoto(value);
+          } else {
+            const mappings: Record<string, keyof typeof documentPreviews> = {
+              'brgy_cert_url': 'brgyCert',
+              'brgy_cert': 'brgyCert',
+              'e_signature_personal_url': 'eSignaturePersonal',
+              'e_signature_personal': 'eSignaturePersonal',
+              'payslip_url': 'payslip',
+              'payslip': 'payslip',
+              'company_id_url': 'companyId',
+              'company_id': 'companyId',
+              'proof_of_billing_url': 'proofOfBilling',
+              'proof_of_billing': 'proofOfBilling',
+              'e_signature_comaker_url': 'eSignatureCoMaker',
+              'e_signature_comaker': 'eSignatureCoMaker'
+            };
+
+            const previewKey = mappings[key];
+            if (previewKey) {
+              console.log(`Updating ${previewKey} URL:`, value);
+              previews[previewKey] = value;
+            }
+          }
+        });
+
+        console.log('Setting new document previews:', previews);
+        setDocumentPreviews(previews);
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (error) {
+      console.error('Error updating documents:', error);
+      // Error will be shown by handleFileUpload's error handler
+      return null;
+    }
   };
 
-  const handleSave = () => {
-    onSave({
-      formData: editableData,
-      documents,
-      profilePhoto,
-      idPhoto,
+  const handleFileUpload = async (type: 'profile' | 'id' | keyof typeof documents, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !applicationUUID || !user?.token) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      toast.error("Invalid file type", {
+        description: "Please upload an image file (JPEG, PNG, etc.)",
+        duration: 3000,
+      });
+      return;
+    }
+
+    const fieldMap: Record<string, string> = {
+      'profile': 'profilePhoto',
+      'id': 'validId',
+      'brgyCert': 'brgyCert',
+      'eSignaturePersonal': 'eSignaturePersonal',
+      'payslip': 'payslip',
+      'companyId': 'companyId',
+      'proofOfBilling': 'proofOfBilling',
+      'eSignatureCoMaker': 'eSignatureCoMaker'
+    };
+
+    const docFieldMap: Record<string, string> = {
+      'profile': 'profile_photo',
+      'id': 'valid_id',
+      'brgyCert': 'brgy_cert',
+      'eSignaturePersonal': 'e_signature_personal',
+      'payslip': 'payslip',
+      'companyId': 'company_id',
+      'proofOfBilling': 'proof_of_billing',
+      'eSignatureCoMaker': 'e_signature_comaker'
+    };
+
+    const fieldName = fieldMap[type];
+    const docType = docFieldMap[type];
+    const formData = new FormData();
+    formData.append(fieldName, file);
+    
+    // Create temporary preview
+    const tempObjectUrl = URL.createObjectURL(file);
+    // Show initial loading toast and store its ID
+    const toastId = toast.loading("Processing document...", {
+      description: "Uploading file..."
     });
+    
+    // Keep track of the current URLs before updating
+    const currentUrls = {
+      profilePhoto: profilePhoto,
+      idPhoto: idPhoto,
+      ...documentPreviews
+    };
+    
+    try {
+      // Update UI with temporary preview immediately
+      if (type === 'profile') {
+        setProfilePhoto(tempObjectUrl);
+      } else if (type === 'id') {
+        setIdPhoto(tempObjectUrl);
+      } else {
+        setDocuments(prev => ({ ...prev, [type]: file }));
+        setDocumentPreviews(prev => ({ ...prev, [type]: tempObjectUrl }));
+      }
+
+      // Upload the file - this handles both delete and upload
+      await uploadDocuments(applicationUUID, formData, user.token);
+      
+      // Wait for processing
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Update the existing toast
+      toast.loading("Processing document...", {
+        id: toastId,
+        description: "Refreshing image preview..."
+      });
+      
+      const timestamp = Date.now();
+      const randomStr = Math.random().toString(36).substring(7);
+      
+      // Fetch the updated document URLs
+      const refreshResult = await refreshApplicationDocumentUrls(
+        `${applicationUUID}?t=${timestamp}&r=${randomStr}`,
+        [docType],
+        user.token
+      );
+
+      console.log('Refresh result:', refreshResult);
+
+      if (!refreshResult) {
+        throw new Error('Failed to get updated document URL');
+      }
+
+      // Clean up temp preview
+      URL.revokeObjectURL(tempObjectUrl);
+
+      // Try different possible URL key formats
+      const possibleKeys = [
+        `${docType}_url`,           // e.g., profile_photo_url
+        docType,                     // e.g., profile_photo
+        fieldName.toLowerCase(),     // e.g., profilephoto
+        `${fieldName.toLowerCase()}_url` // e.g., profilephoto_url
+      ];
+
+      let newUrl: string | null = null;
+      for (const key of possibleKeys) {
+        if (refreshResult[key] && typeof refreshResult[key] === 'string') {
+          newUrl = refreshResult[key];
+          console.log(`Found URL with key: ${key}`, newUrl.substring(0, 100));
+          break;
+        }
+      }
+      
+      if (!newUrl) {
+        console.error('Available keys in refresh result:', Object.keys(refreshResult));
+        throw new Error('No URL returned for uploaded document');
+      }
+
+      // Add cache busting to the URL
+      const urlWithCache = `${newUrl}${
+        newUrl.includes('?') ? '&' : '?'
+      }t=${timestamp}&r=${randomStr}&nocache=${Date.now()}`;
+
+      if (type === 'profile') {
+        console.log('Setting new profile photo URL:', urlWithCache.substring(0, 100));
+        setProfilePhoto(urlWithCache);
+      } else if (type === 'id') {
+        console.log('Setting new ID photo URL:', urlWithCache.substring(0, 100));
+        setIdPhoto(urlWithCache);
+      } else {
+        console.log(`Setting new ${type} URL:`, urlWithCache.substring(0, 100));
+        setDocumentPreviews(prev => ({
+          ...prev,
+          [type]: urlWithCache
+        }));
+      }
+
+      // Update the toast to show success
+      toast.success("Document uploaded successfully", {
+        id: toastId,
+        description: "File has been processed and saved",
+      });
+
+      // Force a re-render by triggering a state update
+      setTimeout(() => {
+        if (type === 'profile') {
+          setProfilePhoto(url => url ? `${url.split('&nocache=')[0]}&nocache=${Date.now()}` : url);
+        } else if (type === 'id') {
+          setIdPhoto(url => url ? `${url.split('&nocache=')[0]}&nocache=${Date.now()}` : url);
+        }
+      }, 500);
+
+    } catch (error) {
+      console.error('Upload failed:', error);
+      
+      // Revert to previous URLs
+      if (type === 'profile') {
+        setProfilePhoto(currentUrls.profilePhoto);
+      } else if (type === 'id') {
+        setIdPhoto(currentUrls.idPhoto);
+      } else {
+        setDocuments(prev => ({ ...prev, [type]: null }));
+        setDocumentPreviews(prev => ({ ...prev, [type]: currentUrls[type] }));
+      }
+
+      // Clean up temporary object URL
+      URL.revokeObjectURL(tempObjectUrl);
+
+      // Show error message
+      toast.error("Failed to upload document", {
+        id: toastId,
+        description: error instanceof Error ? error.message : "An error occurred during upload",
+      });
+    }
+  };
+
+  const handleSave = async () => {
+    if (isSaving) return; // Prevent multiple clicks while saving
+    
+    try {
+      if (!user?.token || !applicationData) return;
+      
+      setIsSaving(true);
+      
+      // Prepare FormData with updated information
+      const formData = new FormData();
+      
+      // Add updated form data
+      const reqData = {
+        applicant_info: {
+          full_name: editableData.personal.fullName || "",
+          contact_number: editableData.personal.contactNo || "",
+          address: editableData.personal.address || "",
+          salary: editableData.employee.salary || "1",
+          job: editableData.employee.position === "Security Guard" ? "Security Guard" :
+               editableData.employee.position === "Seaman" ? "Seaman" :
+               editableData.employee.position === "Teacher" ? "Teacher" : "Others"
+        },
+        comaker_info: {
+          full_name: editableData.coMaker.fullName || "",
+          contact_number: editableData.coMaker.contactNo || ""
+        },
+        model_input_data: {
+          Employment_Sector: editableData.employee.sector === "Public" ? "Public" : 
+                           editableData.employee.sector === "Private" ? "Private" : "Private",
+          Employment_Tenure_Months: Math.max(1, parseInt(editableData.employee.employmentDuration?.split(' ')[0]) || 1),
+          Net_Salary_Per_Cutoff: Math.max(1, parseFloat(editableData.employee.salary?.replace(/[₱,]/g, '')) || 1),
+          Salary_Frequency: editableData.employee.typeOfSalary === "Bimonthly" ? "Bimonthly" :
+                          editableData.employee.typeOfSalary === "Biweekly" ? "Biweekly" :
+                          editableData.employee.typeOfSalary === "Weekly" ? "Weekly" : "Monthly",
+          Housing_Status: editableData.personal.housingStatus === "Owned" ? "Owned" : "Rented",
+          Years_at_Current_Address: Math.max(1, parseFloat(editableData.personal.yearsLivingHere?.split(' ')[0]) || 1),
+          Household_Head: editableData.personal.headOfHousehold === "Yes" ? "Yes" : "No",
+          Number_of_Dependents: Math.max(0, parseInt(editableData.personal.dependents) || 0),
+          Comaker_Relationship: editableData.coMaker.relationshipWithApplicant === "Spouse" ? "Spouse" :
+                              editableData.coMaker.relationshipWithApplicant === "Sibling" ? "Sibling" :
+                              editableData.coMaker.relationshipWithApplicant === "Parent" ? "Parent" : "Friend",
+          Comaker_Employment_Tenure_Months: Math.max(1, parseInt(editableData.coMaker.howManyMonthsYears?.split(' ')[0]) || 1),
+          Comaker_Net_Salary_Per_Cutoff: Math.max(1, parseFloat(editableData.coMaker.salary?.replace(/[₱,]/g, '')) || 1),
+          Has_Community_Role: editableData.other.communityPosition === "Member" ? "Member" :
+                            editableData.other.communityPosition === "Leader" ? "Leader" :
+                            editableData.other.communityPosition === "Multiple Leader" ? "Multiple Leader" : "None",
+          Paluwagan_Participation: editableData.other.paluwagaParticipation === "Rarely" ? "Rarely" :
+                                 editableData.other.paluwagaParticipation === "Sometimes" ? "Sometimes" :
+                                 editableData.other.paluwagaParticipation === "Frequently" ? "Frequently" : "Never",
+          Other_Income_Source: editableData.other.otherIncomeSources === "OFW Remittance" ? "OFW Remittance" :
+                             editableData.other.otherIncomeSources === "Freelance" ? "Freelance" :
+                             editableData.other.otherIncomeSources === "Business" ? "Business" : "None",
+          Disaster_Preparedness: editableData.other.disasterPreparednessStrategy === "Savings" ? "Savings" :
+                                editableData.other.disasterPreparednessStrategy === "Insurance" ? "Insurance" :
+                                editableData.other.disasterPreparednessStrategy === "Community Plan" ? "Community Plan" : "None",
+          Is_Renewing_Client: 0,
+          Grace_Period_Usage_Rate: 0,
+          Late_Payment_Count: 0,
+          Had_Special_Consideration: 0
+        }
+      };
+
+      // Get MongoDB ID
+      const mongoId = typeof applicationData._id === 'string' 
+        ? applicationData._id 
+        : applicationData._id?.$oid;
+
+      if (!mongoId) {
+        throw new Error("Invalid application ID");
+      }
+
+      // Add the request data to FormData
+      formData.append('request_data', JSON.stringify(reqData));
+
+      // Call the update API
+      const response = await updateLoanApplication(
+        mongoId,
+        formData,
+        user.token
+      );
+
+      // Show success message
+      toast.success("Application Updated", {
+        description: "The application has been updated and reassessed successfully."
+      });
+
+      // Notify parent component
+      onSave({
+        formData: editableData,
+        // documents,
+        // profilePhoto,
+        // idPhoto,
+      });
+    } catch (error) {
+      console.error('Error updating application:', error);
+      // Show error message
+      toast.error("Update Failed", {
+        description: error instanceof Error ? error.message : "Failed to update the application"
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Get loan recommendations and prediction data from application data
@@ -489,10 +809,12 @@ export function ApplicantOverview({
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button
-              className="flex items-center gap-2 bg-red-600 hover:bg-red-700"
+              variant="ghost"
+              size="icon"
+              className="text-red-600 hover:text-red-700 hover:bg-red-50"
             >
-              <Trash2 className="h-4 w-4" />
-              Delete Application
+              <Trash2 className="h-5 w-5" />
+              <span className="sr-only">Delete Application</span>
             </Button>
           </AlertDialogTrigger>
           <AlertDialogContent>
@@ -547,16 +869,40 @@ export function ApplicantOverview({
                           onClick={() => setPreviewImage(profilePhoto)}
                           onError={async (e) => {
                             console.error('Failed to load profile photo:', profilePhoto);
-                            const retries = imageRetries.profilePhoto || 0;
-                            if (retries < MAX_IMAGE_RETRIES) {
-                              setImageRetries(prev => ({ ...prev, profilePhoto: retries + 1 }));
-                              const refreshed = await refreshSignedUrls('profilePhoto');
-                              if (!refreshed) {
-                                e.currentTarget.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>';
+                            
+                            // Clear source to prevent cached version
+                            e.currentTarget.src = '';
+                            
+                            try {
+                              // Force immediate refresh of the URL
+                              if (applicationUUID && user?.token) {
+                                const timestamp = Date.now();
+                                const refreshed = await refreshApplicationDocumentUrls(
+                                  `${applicationUUID}?t=${timestamp}&noCache=${Math.random()}`,
+                                  ['profile_photo'],
+                                  user.token
+                                );
+                                
+                                if (refreshed && refreshed.profile_photo_url) {
+                                  // Add cache busting parameters
+                                  const newUrl = refreshed.profile_photo_url + 
+                                    (refreshed.profile_photo_url.includes('?') ? '&' : '?') +
+                                    `t=${timestamp}&noCache=${Math.random()}`;
+                                  
+                                  // Update state with new URL
+                                  setProfilePhoto(newUrl);
+                                  
+                                  // Update image source
+                                  e.currentTarget.src = newUrl;
+                                  return;
+                                }
                               }
-                            } else {
-                              e.currentTarget.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>';
+                            } catch (error) {
+                              console.error('Error refreshing profile photo URL:', error);
                             }
+                            
+                            // Show fallback if refresh failed
+                            e.currentTarget.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>';
                           }}
                         />
                       </div>
@@ -595,16 +941,40 @@ export function ApplicantOverview({
                           onClick={() => setPreviewImage(idPhoto)}
                           onError={async (e) => {
                             console.error('Failed to load ID photo:', idPhoto);
-                            const retries = imageRetries.idPhoto || 0;
-                            if (retries < MAX_IMAGE_RETRIES) {
-                              setImageRetries(prev => ({ ...prev, idPhoto: retries + 1 }));
-                              const refreshed = await refreshSignedUrls('idPhoto');
-                              if (!refreshed) {
-                                e.currentTarget.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>';
+                            
+                            // Clear source to prevent cached version
+                            e.currentTarget.src = '';
+                            
+                            try {
+                              // Force immediate refresh of the URL
+                              if (applicationUUID && user?.token) {
+                                const timestamp = Date.now();
+                                const refreshed = await refreshApplicationDocumentUrls(
+                                  `${applicationUUID}?t=${timestamp}&noCache=${Math.random()}`,
+                                  ['valid_id'],
+                                  user.token
+                                );
+                                
+                                if (refreshed && refreshed.valid_id_url) {
+                                  // Add cache busting parameters
+                                  const newUrl = refreshed.valid_id_url + 
+                                    (refreshed.valid_id_url.includes('?') ? '&' : '?') +
+                                    `t=${timestamp}&noCache=${Math.random()}`;
+                                  
+                                  // Update state with new URL
+                                  setIdPhoto(newUrl);
+                                  
+                                  // Update image source
+                                  e.currentTarget.src = newUrl;
+                                  return;
+                                }
                               }
-                            } else {
-                              e.currentTarget.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>';
+                            } catch (error) {
+                              console.error('Error refreshing ID photo URL:', error);
                             }
+                            
+                            // Show fallback if refresh failed
+                            e.currentTarget.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>';
                           }}
                         />
                       </div>
@@ -659,10 +1029,14 @@ export function ApplicantOverview({
                   </div>
                   <div>
                     <Label>Head of Household</Label>
-                    <Input
+                    <select
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
                       value={editableData.personal.headOfHousehold}
                       onChange={(e) => handleInputChange('personal', 'headOfHousehold', e.target.value)}
-                    />
+                    >
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
                   </div>
                   <div>
                     <Label>Dependents</Label>
@@ -680,10 +1054,14 @@ export function ApplicantOverview({
                   </div>
                   <div>
                     <Label>Housing Status</Label>
-                    <Input
-                      value={editableData.personal.housingStatus}
+                    <select
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+                      value={editableData.personal.housingStatus || "Rented"}
                       onChange={(e) => handleInputChange('personal', 'housingStatus', e.target.value)}
-                    />
+                    >
+                      <option value="Rented">Rented</option>
+                      <option value="Owned">Owned</option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -726,10 +1104,16 @@ export function ApplicantOverview({
                   </div>
                   <div>
                     <Label>Type of Salary</Label>
-                    <Input
-                      value={editableData.employee.typeOfSalary}
+                    <select
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+                      value={editableData.employee.typeOfSalary || "Monthly"}
                       onChange={(e) => handleInputChange('employee', 'typeOfSalary', e.target.value)}
-                    />
+                    >
+                      <option value="Monthly">Monthly</option>
+                      <option value="Semi-Monthly">Semi-Monthly</option>
+                      <option value="Weekly">Weekly</option>
+                      <option value="Daily">Daily</option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -740,17 +1124,28 @@ export function ApplicantOverview({
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label>Community Position</Label>
-                    <Input
-                      value={editableData.other.communityPosition}
+                    <select
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+                      value={editableData.other.communityPosition || "None"}
                       onChange={(e) => handleInputChange('other', 'communityPosition', e.target.value)}
-                    />
+                    >
+                      <option value="None">None</option>
+                      <option value="Member">Member</option>
+                      <option value="Leader">Leader</option>
+                      <option value="Multiple Leader">Multiple Leader</option>
+                    </select>
                   </div>
                   <div>
                     <Label>Paluwaga Participation</Label>
-                    <Input
-                      value={editableData.other.paluwagaParticipation}
+                    <select
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+                      value={editableData.other.paluwagaParticipation || "None"}
                       onChange={(e) => handleInputChange('other', 'paluwagaParticipation', e.target.value)}
-                    />
+                    >
+                      <option value="None">None</option>
+                      <option value="Participant">Participant</option>
+                      <option value="Host">Host</option>
+                    </select>
                   </div>
                   <div className="col-span-2">
                     <Label>Other Income Sources</Label>
@@ -929,7 +1324,7 @@ export function ApplicantOverview({
                   )}
 
                   {activeSection === 'explanation' && applicationData?.ai_explanation && (
-                    <div className="space-y-2">
+                    <div className="space-y-4">
                       <h3 className="font-semibold">AI Analysis</h3>
                       {applicationData.ai_explanation.technical_explanation.includes("Error") ? (
                         <div className="text-yellow-600 text-sm">
@@ -938,16 +1333,37 @@ export function ApplicantOverview({
                       ) : (
                         <>
                           <div>
-                            <p className="text-sm font-medium">Business Analysis</p>
-                            <p className="text-sm text-gray-600 mt-1">{applicationData.ai_explanation.business_explanation}</p>
+                            <p className="text-sm font-medium mb-2">Business Analysis</p>
+                            <div className="space-y-1">
+                              {applicationData.ai_explanation.business_explanation.split('•').filter(Boolean).map((point, index) => (
+                                <div key={index} className="flex gap-2 text-sm text-gray-600">
+                                  <span className="text-blue-600">•</span>
+                                  <span>{point.trim()}</span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                           <div>
-                            <p className="text-sm font-medium">Risk Factors</p>
-                            <p className="text-sm text-gray-600 mt-1">{applicationData.ai_explanation.risk_factors}</p>
+                            <p className="text-sm font-medium mb-2">Risk Factors</p>
+                            <div className="space-y-1">
+                              {applicationData.ai_explanation.risk_factors.split('•').filter(Boolean).map((point, index) => (
+                                <div key={index} className="flex gap-2 text-sm text-gray-600">
+                                  <span className="text-yellow-600">•</span>
+                                  <span>{point.trim()}</span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                           <div>
-                            <p className="text-sm font-medium">Recommendations</p>
-                            <p className="text-sm text-gray-600 mt-1">{applicationData.ai_explanation.recommendations}</p>
+                            <p className="text-sm font-medium mb-2">Recommendations</p>
+                            <div className="space-y-1">
+                              {applicationData.ai_explanation.recommendations.split('•').filter(Boolean).map((point, index) => (
+                                <div key={index} className="flex gap-2 text-sm text-gray-600">
+                                  <span className="text-green-600">•</span>
+                                  <span>{point.trim()}</span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </>
                       )}
@@ -1083,6 +1499,26 @@ export function ApplicantOverview({
           </ScrollArea>
         </div>
       </div>
+      {/* Save Changes Button in a sticky footer */}
+      <div className="sticky bottom-0 left-0 right-0 bg-white border-t py-4 px-6 mt-4">
+        <div className="max-w-screen-xl mx-auto flex justify-between items-center">
+          <Button 
+            onClick={handleSave}
+            disabled={isSaving}
+            className={`flex items-center gap-2 ${
+              isSaving 
+                ? 'bg-blue-400 cursor-not-allowed' 
+                : 'bg-blue-600 hover:bg-blue-700'
+            } text-white`}
+          >
+            <Save className={`h-4 w-4 ${isSaving ? 'animate-spin' : ''}`} />
+            {isSaving ? 'Saving...' : 'Save Changes'}
+          </Button>
+          <div className="text-sm text-gray-500">
+            All changes will be saved automatically
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1160,57 +1596,99 @@ const DocumentUploadField: React.FC<DocumentUploadFieldProps> = ({
                   onClick={() => setPreviewImage(preview)}
                   onError={async (e) => {
                     console.error(`Failed to load ${label}:`, preview);
-                    const fieldKey = id.replace(/-/g, '') as keyof typeof imageRetries;
-                    const retries = imageRetries[fieldKey] || 0;
-
-                    if (retries < MAX_IMAGE_RETRIES && applicationUUID && user?.token) {
-                      try {
-                        setImageRetries(prev => ({ ...prev, [fieldKey]: retries + 1 }));
-                        // Refresh all document URLs when any image fails
-                        const refreshed = await refreshApplicationDocumentUrls(applicationUUID, undefined, user.token);
+                    
+                    // Clear source to prevent cached version
+                    e.currentTarget.src = '';
+                    
+                    try {
+                      if (applicationUUID && user?.token) {
+                        // Map document type from field ID
+                        const documentTypeMap: Record<string, string> = {
+                          'brgy-cert': 'brgy_cert',
+                          'e-signature-personal': 'e_signature_personal',
+                          'payslip': 'payslip',
+                          'company-id': 'company_id',
+                          'proof-billing': 'proof_of_billing',
+                          'e-signature-comaker': 'e_signature_comaker'
+                        };
                         
-                        if (refreshed) {
-                          // Update all document previews with fresh URLs
-                          const newPreviews = { ...documentPreviews };
-                          const mappings: Record<string, keyof typeof documentPreviews> = {
-                            'brgy_cert_url': 'brgyCert',
-                            'e_signature_personal_url': 'eSignaturePersonal',
-                            'payslip_url': 'payslip',
-                            'company_id_url': 'companyId',
-                            'proof_of_billing_url': 'proofOfBilling',
-                            'e_signature_comaker_url': 'eSignatureCoMaker'
-                          };
-
-                          Object.entries(refreshed).forEach(([key, value]) => {
-                            if (!value) return;
-                            if (key === 'profile_photo_url') setProfilePhoto(value);
-                            else if (key === 'valid_id_url') setIdPhoto(value);
-                            else {
-                              const previewKey = mappings[key];
-                              if (previewKey) newPreviews[previewKey] = value;
-                            }
-                          });
-
-                          setDocumentPreviews(newPreviews);
-                          return; // Exit early if refresh successful
+                        const timestamp = Date.now();
+                        const documentType = documentTypeMap[id];
+                        
+                        if (documentType) {
+                          // Force immediate refresh of specific document URL
+                          const refreshed = await refreshApplicationDocumentUrls(
+                            `${applicationUUID}?t=${timestamp}&noCache=${Math.random()}`,
+                            [documentType],
+                            user.token
+                          );
+                          
+                          if (refreshed) {
+                            // Update preview URLs with cache busting
+                            const newPreviews = { ...documentPreviews };
+                            const mappings: Record<string, keyof typeof documentPreviews> = {
+                              'brgy_cert_url': 'brgyCert',
+                              'e_signature_personal_url': 'eSignaturePersonal',
+                              'payslip_url': 'payslip',
+                              'company_id_url': 'companyId',
+                              'proof_of_billing_url': 'proofOfBilling',
+                              'e_signature_comaker_url': 'eSignatureCoMaker'
+                            };
+                            
+                            Object.entries(refreshed).forEach(([key, value]) => {
+                              if (!value) return;
+                              
+                              // Add cache busting parameters
+                              const urlWithCache = `${value}${value.includes('?') ? '&' : '?'}t=${timestamp}&noCache=${Math.random()}`;
+                              
+                              if (key === 'profile_photo_url') {
+                                setProfilePhoto(urlWithCache);
+                              } else if (key === 'valid_id_url') {
+                                setIdPhoto(urlWithCache);
+                              } else {
+                                const previewKey = mappings[key];
+                                if (previewKey) {
+                                  newPreviews[previewKey] = urlWithCache;
+                                  if (e.currentTarget && previewKey === mappings[`${documentType}_url`]) {
+                                    e.currentTarget.src = urlWithCache;
+                                  }
+                                }
+                              }
+                            });
+                            
+                            setDocumentPreviews(newPreviews);
+                            return; // Exit if refresh successful
+                          }
                         }
-                      } catch (error) {
-                        console.error('Failed to refresh URLs:', error);
                       }
+                    } catch (error) {
+                      console.error('Failed to refresh URLs:', error);
                     }
 
-                    // Show fallback if refresh failed or max retries reached
-                    if (e.currentTarget.parentElement) {
-                      e.currentTarget.parentElement.innerHTML = `
-                        <div class="w-full h-full bg-gray-100 rounded flex items-center justify-center">
-                          <div class="text-center">
-                            <svg class="h-12 w-12 text-gray-400 mx-auto mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2m0 0H8m13 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <span class="text-sm text-gray-500">Failed to load image</span>
-                          </div>
-                        </div>
-                      `;
+                    // Show fallback if refresh failed
+                    if (e.currentTarget) {
+                      // Use appropriate fallback icon based on document type
+                      let fallbackIcon;
+                      if (id.includes('signature')) {
+                        fallbackIcon = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />`;
+                      } else if (id.includes('id')) {
+                        fallbackIcon = `<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10"/><path d="M7 12h10"/><path d="M7 16h10"/>`;
+                      } else if (id.includes('cert')) {
+                        fallbackIcon = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />`;
+                      } else {
+                        fallbackIcon = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />`;
+                      }
+                      
+                      e.currentTarget.src = `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${fallbackIcon}</svg>`;
+                      
+                      // Add error message below the image
+                      const container = e.currentTarget.parentElement;
+                      if (container) {
+                        const errorMsg = document.createElement('div');
+                        errorMsg.className = 'text-sm text-red-500 mt-2';
+                        errorMsg.textContent = 'Failed to load image';
+                        container.appendChild(errorMsg);
+                      }
                     }
                   }}
                 />

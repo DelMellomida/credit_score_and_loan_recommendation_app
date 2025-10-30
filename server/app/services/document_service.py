@@ -57,6 +57,56 @@ class DocumentService:
 
     async def create_documents(self, application_id: str, files: Dict[str, UploadFile], user_email: str) -> ApplicationDocument:
         logger.info(f"Creating documents for application {application_id} by {user_email}")
+
+        # CRITICAL: Check if document already exists first
+        existing_doc = await ApplicationDocument.find_one(ApplicationDocument.application_id == application_id)
+        if existing_doc:
+            logger.warning(f"Document already exists for application {application_id}, updating instead of creating")
+            # Call update instead to avoid duplicates
+            file_metadata = existing_doc.file_metadata or {}
+            
+            for field, file in files.items():
+                # Delete old file if it exists
+                old_url = getattr(existing_doc, f"{field}_url", None)
+                if old_url:
+                    try:
+                        path = self._extract_path_from_url(old_url)
+                        await self._delete_file_from_supabase(path)
+                        logger.info(f"Deleted old file for {field}: {path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete old file for {field}: {str(e)}")
+                
+                # Upload new file
+                safe_field = field.replace(" ", "_").lower()
+                filename = self._generate_unique_filename(file.filename)
+                file_path = f"{existing_doc.application_id}/{safe_field}_{filename}"
+                
+                uploaded_path, size = await self._upload_file_to_supabase(file, file_path)
+                signed_url = await self._generate_signed_url(uploaded_path)
+                
+                # Update document with new URL
+                setattr(existing_doc, f"{field}_url", signed_url)
+                file_metadata[safe_field] = {
+                    "filename": file.filename,
+                    "size": str(size),
+                    "content_type": file.content_type,
+                    "uploaded_at": datetime.utcnow().isoformat()
+                }
+                logger.info(f"Updated {field} for application {application_id} by {user_email} (size={size}, content_type={file.content_type})")
+            
+            # Save updated document
+            existing_doc.updated_at = datetime.utcnow()
+            existing_doc.updated_by = user_email
+            existing_doc.file_metadata = file_metadata
+            
+            try:
+                await existing_doc.save()
+                logger.info(f"Successfully saved document updates for application {application_id}")
+            except Exception as e:
+                logger.error(f"Failed to save document updates: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Failed to save document updates: {str(e)}")
+            
+            return existing_doc
         
         # Input validation with detailed logging
         if not application_id:
@@ -260,21 +310,17 @@ class DocumentService:
             )
 
     async def get_documents_by_application_id(self, application_id: str) -> Optional[ApplicationDocument]:
+        """Get documents by application_id with refreshed signed URLs"""
         doc = await ApplicationDocument.find_one(ApplicationDocument.application_id == application_id)
         if not doc:
-            # Return empty document with no URLs instead of throwing 404
-            return ApplicationDocument(
-                document_id=str(uuid.uuid4()),
-                application_id=application_id,
-                created_by="system",
-                updated_by="system"
-            )
+            # Return None instead of creating empty document
+            logger.info(f"No documents found for application {application_id}")
+            return None
             
-        # Refresh signed URLs
+        # Refresh signed URLs for existing documents
         for field in ["brgy_cert_url", "e_signature_personal_url", "payslip_url", "company_id_url", "proof_of_billing_url", "e_signature_comaker_url", "profile_photo_url", "valid_id_url"]:
             url = getattr(doc, field)
             if url:
-                # Extract path from URL if it's a full URL
                 try:
                     path = self._extract_path_from_url(url)
                     signed_url = await self._generate_signed_url(path)
@@ -555,24 +601,39 @@ class DocumentService:
                 # Continue cleanup even if one file fails
 
     async def _generate_signed_url(self, file_path: str) -> str:
-        """Generate a signed URL for accessing a file
+        """Generate a signed URL for accessing a file with shorter expiry
         
         Args:
             file_path: The storage path of the file
             
         Returns:
-            Signed URL string
+            Signed URL string with cache control parameters
         """
         try:
-            res = self.supabase.storage.from_(BUCKET_NAME).create_signed_url(file_path, 3600)
+            # Generate URL with 15-minute expiry
+            res = self.supabase.storage.from_(BUCKET_NAME).create_signed_url(
+                file_path, 
+                900,  # 15 minutes in seconds
+                {
+                    # Add cache control to response headers
+                    'response-cache-control': 'no-cache, no-store, must-revalidate, max-age=0',
+                    'response-expires': '0',
+                    'response-pragma': 'no-cache'
+                }
+            )
             signed_url = res.get("signedURL")
             
             if not signed_url:
                 logger.error(f"No signed URL returned for path: {file_path}")
                 raise HTTPException(status_code=500, detail="Failed to generate signed URL")
+
+            # Add timestamp to URL to prevent caching
+            url = signed_url + (
+                "&" if "?" in signed_url else "?"
+            ) + f"t={int(datetime.utcnow().timestamp())}"
                 
-            logger.debug(f"Generated signed URL for {file_path}")
-            return signed_url
+            logger.debug(f"Generated cache-controlled signed URL for {file_path}")
+            return url
         except HTTPException:
             raise
         except Exception as e:
@@ -672,3 +733,62 @@ class DocumentService:
     def _generate_unique_filename(self, original_filename: str) -> str:
         ext = os.path.splitext(original_filename)[1]
         return f"{uuid.uuid4()}{ext}"
+    
+    async def update_or_create_documents(self, application_id: str, files: Dict[str, UploadFile], user_email: str) -> ApplicationDocument:
+        """
+        Update existing document or create new one if it doesn't exist.
+        This ensures we never create duplicate documents for the same application.
+        """
+        # Try to find existing document
+        doc = await ApplicationDocument.find_one(ApplicationDocument.application_id == application_id)
+        
+        if doc:
+            logger.info(f"Found existing document for application {application_id}, updating...")
+            file_metadata = doc.file_metadata or {}
+            
+            for field, file in files.items():
+                # Delete old file if it exists
+                old_url = getattr(doc, f"{field}_url", None)
+                if old_url:
+                    try:
+                        path = self._extract_path_from_url(old_url)
+                        await self._delete_file_from_supabase(path)
+                        logger.info(f"Deleted old file for {field}: {path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete old file for {field}: {str(e)}")
+                
+                # Upload new file
+                safe_field = field.replace(" ", "_").lower()
+                filename = self._generate_unique_filename(file.filename)
+                file_path = f"{doc.application_id}/{safe_field}_{filename}"
+                
+                uploaded_path, size = await self._upload_file_to_supabase(file, file_path)
+                signed_url = await self._generate_signed_url(uploaded_path)
+                
+                # Update document with new URL
+                setattr(doc, f"{field}_url", signed_url)
+                file_metadata[safe_field] = {
+                    "filename": file.filename,
+                    "size": str(size),
+                    "content_type": file.content_type,
+                    "uploaded_at": datetime.utcnow().isoformat()
+                }
+                logger.info(f"Updated {field} for application {application_id} by {user_email} (size={size}, content_type={file.content_type})")
+            
+            # Save updated document
+            doc.updated_at = datetime.utcnow()
+            doc.updated_by = user_email
+            doc.file_metadata = file_metadata
+            
+            try:
+                await doc.save()
+                logger.info(f"Successfully saved document updates for application {application_id}")
+            except Exception as e:
+                logger.error(f"Failed to save document updates: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Failed to save document updates: {str(e)}")
+            
+            return doc
+        else:
+            # No existing document, create new one
+            logger.info(f"No existing document found for application {application_id}, creating new one")
+            return await self.create_documents(application_id, files, user_email)

@@ -1,7 +1,7 @@
 "use client";
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { login as apiLogin, signup as apiSignup } from '../lib/api';
-import { useToast } from './ToastContext';
+import { toast } from 'sonner';
 
 interface AuthUser {
   email: string;
@@ -25,7 +25,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { showToast } = useToast();
+  // Using sonner toast directly
 
   const refreshToken = async (): Promise<boolean> => {
     if (!user) return false;
@@ -128,7 +128,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     localStorage.removeItem('authUser');
     
     if (showNotification) {
-      showToast('Your session has expired. Please log in again.', 'info');
+      toast.info('Your session has expired. Please log in again.');
     }
   };
 
