@@ -2,6 +2,8 @@
 
 A modern, AI-powered loan processing system that combines credit scoring with intelligent loan product recommendations. This application helps financial institutions streamline their loan application process while providing data-driven decisions and personalized loan recommendations.
 
+Link: <https://thesis-credit-score-loan-applicatio.vercel.app/>
+
 ## Table of Contents
 - [Features](#features)
 - [Technologies Used](#technologies-used)
