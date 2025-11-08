@@ -15,11 +15,17 @@
     "Comaker_Relationship",
     "Has_Community_Role",
     "Paluwagan_Participation",
-    "Disaster_Preparedness"
+    "Disaster_Preparedness",
+    "Proactive_Financial_Health_Score"
   ],
   "features_removed_vif": [],
   "regularization_parameter": 0.01,
-  "training_date": "2025-07-26 23:20:22",
-  "test_roc_auc": 0.68293255301374,
-  "fairness_applied": true
+  "class_weights": {
+    "0": 1,
+    "1": 4
+  },
+  "training_date": "2025-10-29 06:02:56",
+  "test_roc_auc": 0.7000827561487291,
+  "fairness_applied": true,
+  "includes_proactive_health_score": true
 }

@@ -1,13 +1,12 @@
 from app.database.models.loan_application_model import LoanApplication, PredictionResult, AIExplanation
 import logging
-from fastapi import HTTPException, status
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 from datetime import datetime
 
-from app.schemas.loan_schema import FullLoanApplicationRequest, RecommendedProducts, ApplicantInfo as ApplicantInfoSchema
+from app.schemas.loan_schema import FullLoanApplicationRequest, RecommendedProducts
 from app.services.prediction_service import PredictionService, prediction_service
-from app.services.ai_service import AIExplainabilityService, ai_service
+from app.services.ai_service import ai_service
 from app.services.loan_recommendation_service import LoanRecommendationService, loan_recommendation_service
 
 logger = logging.getLogger(__name__)
@@ -21,13 +20,6 @@ class LoanApplicationService:
     def __init__(self, 
                  prediction_service: PredictionService, 
                  recommendation_service: Optional[LoanRecommendationService] = None):
-        """
-        Initialize the loan application service with required services.
-        
-        Args:
-            prediction_service: The prediction service instance
-            recommendation_service: The loan recommendation service instance
-        """
         self.prediction_service = prediction_service
         self.ai_service = ai_service
         self.recommendation_service = recommendation_service
@@ -38,20 +30,6 @@ class LoanApplicationService:
         request_data: FullLoanApplicationRequest, 
         loan_officer_id: str
     ) -> Dict[str, Any]:
-        """
-        Create a new loan application record with prediction results.
-        
-        Args:
-            request_data: Complete loan application request data
-            loan_officer_id: ID of the loan officer handling the application
-            
-        Returns:
-            Dict containing the created loan application and prediction result
-            
-        Raises:
-            ValueError: If input validation fails
-            RuntimeError: If prediction or database operations fail
-        """
         try:
             logger.info(f"Creating loan application for loan officer: {loan_officer_id}")
             
@@ -59,7 +37,20 @@ class LoanApplicationService:
             self._validate_loan_application_data(request_data)
             
             # Run prediction using the prediction service
-            prediction_result = await self._run_prediction(request_data.model_input_data)
+            try:
+                prediction_result = await self._run_prediction(request_data.model_input_data)
+                if not prediction_result:
+                    raise RuntimeError("Prediction service returned no result")
+            except Exception as e:
+                logger.error(f"Failed to get prediction result: {e}")
+                # Create a failed prediction result
+                prediction_result = PredictionResult(
+                    final_credit_score=0,
+                    default=1,
+                    probability_of_default=1.0,
+                    loan_recommendation=[],
+                    status="Failed",
+                )
             
             # Generate loan recommendations if service is available
             if self.recommendation_service:
@@ -79,7 +70,8 @@ class LoanApplicationService:
                 applicant_info=request_data.applicant_info,
                 co_maker_info=request_data.comaker_info,
                 model_input_data=request_data.model_input_data,
-                prediction_result=prediction_result
+                prediction_result=prediction_result,
+                status="Pending"  # Set initial status
             )
             
             # Save to database
@@ -102,37 +94,60 @@ class LoanApplicationService:
             raise RuntimeError(f"Failed to create loan application: {str(e)}")
         
     async def _generate_and_save_explanation(self, application: LoanApplication) -> Optional[AIExplanation]:
-        """
-        Generate and save AI explanation for the loan application.
-        
-        Args:
-            application: The loan application to generate explanation for
-            
-        Returns:
-            Optional[AIExplanation]: The generated explanation or None if failed
-        """
-        if not self.ai_service:
-            logger.warning("AIExplainabilityService is not available, skipping explanation generation")
-            return None
-        
         try:
+            if not self.ai_service:
+                logger.warning("AIExplainabilityService is not available, skipping explanation generation")
+                return None
+            
             logger.info(f"Generating AI explanation for application ID: {application.application_id}")
             
+            # Check if we have a valid prediction result
+            if not application.prediction_result:
+                error_msg = "No prediction result available for AI explanation generation"
+                logger.error(error_msg)
+                application.ai_explanation_status = "failed"
+                application.ai_explanation_error = error_msg
+                await application.save()
+                return None
+
+            if not hasattr(application.prediction_result, "model_dump"):
+                logger.error("Invalid prediction result format")
+                application.ai_explanation_status = "failed"
+                application.ai_explanation_error = "Invalid prediction result format"
+                await application.save()
+                return None
+                
             prediction_result_dict = application.prediction_result.model_dump()
             
-            # This is a synchronous call (removed await)
-            explanation_dict = self.ai_service.generate_loan_explanation(
-                application_data=application.model_input_data,
-                prediction_results=prediction_result_dict
-            )
+            # Call the AI service asynchronously
+            try:
+                explanation_dict = await self.ai_service.generate_loan_explanation_async(
+                    application_data=application.model_input_data,
+                    prediction_results=prediction_result_dict
+                )
 
-            # Handle potential failure from the AI service
-            if not explanation_dict or "technical_explanation" not in explanation_dict:
-                logger.error(f"AI service failed to return a valid explanation dict. Got: {explanation_dict}")
-                return None 
+                # Handle potential failure from the AI service
+                if not explanation_dict or "technical_explanation" not in explanation_dict:
+                    error_msg = f"AI service failed to return a valid explanation dict. Got: {explanation_dict}"
+                    logger.error(error_msg)
+                    # Set an error status in the application
+                    application.ai_explanation_status = "failed"
+                    application.ai_explanation_error = error_msg
+                    await application.save()
+                    return None
+            except Exception as e:
+                error_msg = f"AI service failed to generate explanation: {str(e)}"
+                logger.error(error_msg)
+                # Set an error status in the application
+                application.ai_explanation_status = "failed"  
+                application.ai_explanation_error = error_msg
+                await application.save()
+                return None
 
             ai_explanation = AIExplanation(**explanation_dict)
             application.ai_explanation = ai_explanation
+            application.ai_explanation_status = "success"
+            application.ai_explanation_error = None
             await application.save()
             logger.info(f"AI explanation generated and saved successfully for application ID: {application.application_id}")
             return ai_explanation
@@ -141,15 +156,6 @@ class LoanApplicationService:
             return None
 
     async def get_loan_application(self, application_id: UUID) -> Optional[LoanApplication]:
-        """
-        Retrieve a loan application by its application_id UUID.
-        
-        Args:
-            application_id: UUID of the loan application
-            
-        Returns:
-            Optional[LoanApplication]: The loan application if found, None otherwise
-        """
         try:
             logger.info(f"Retrieving loan application with application_id: {application_id}")
             
@@ -171,33 +177,123 @@ class LoanApplicationService:
         self, 
         skip: int = 0, 
         limit: int = 100, 
-        loan_officer_id: Optional[str] = None
-    ) -> List[LoanApplication]:
-        """
-        Retrieve loan applications with optional filtering and pagination.
-        
-        Args:
-            skip: Number of records to skip
-            limit: Maximum number of records to return
-            loan_officer_id: Optional filter by loan officer ID
-            
-        Returns:
-            List[LoanApplication]: List of loan applications
-        """
+        loan_officer_id: Optional[str] = None,
+        status: Optional[str] = None,
+        search: Optional[str] = None
+    ) -> Dict[str, Any]:
         try:
-            logger.info(f"Retrieving loan applications (skip: {skip}, limit: {limit}, officer: {loan_officer_id})")
+            logger.info(f"Retrieving loan applications (skip: {skip}, limit: {limit}, officer: {loan_officer_id}, status: {status}, search: {search})")
             
-            # Build query
-            query = LoanApplication.find()
-            
+            # Build base query
+            query = {}
             if loan_officer_id:
-                query = query.find(LoanApplication.loan_officer_id == loan_officer_id)
+                query["loan_officer_id"] = loan_officer_id
+                
+            # Add status filter if provided
+            if status and status.lower() != 'all':
+                query["status"] = status.title()  # Convert to title case to match enum values
+                
+            # Add search filter if provided
+            if search:
+                # Use MongoDB $or to search across multiple fields
+                search_regex = {"$regex": search, "$options": "i"}  # case-insensitive search
+                query["$or"] = [
+                    {"applicant_info.full_name": search_regex},
+                    {"applicant_info.email": search_regex},
+                    {"applicant_info.job": search_regex},
+                    {"model_input_data.Employment_Sector": search_regex}
+                ]
             
-            # Apply pagination
-            applications = await query.skip(skip).limit(limit).to_list()
+            try:
+                # Get total count
+                total = await LoanApplication.find(query).count()
+                logger.info(f"Total count: {total}")
+                
+                # Get paginated results with sorting by timestamp in descending order (newest first)
+                applications = await LoanApplication.find(query).sort([("timestamp", -1)]).skip(skip).limit(limit).to_list()
+                logger.info(f"Retrieved {len(applications)} applications")
+                
+            except Exception as e:
+                logger.error(f"Database query error: {e}")
+                raise RuntimeError(f"Database query failed: {str(e)}")
             
-            logger.info(f"Retrieved {len(applications)} loan applications")
-            return applications
+            # Format the applications for response
+            formatted_applications = []
+            try:
+                for app in applications:
+                    app_data = {
+                        "_id": {"$oid": str(app.id)},  # Include MongoDB ObjectId
+                        "application_id": str(app.application_id),
+                        "timestamp": app.timestamp.isoformat(),
+                        "loan_officer_id": app.loan_officer_id,
+                        "status": app.status or "Pending",
+                        "applicant_info": app.applicant_info.model_dump() if app.applicant_info else {},
+                        "comaker_info": app.comaker_info.model_dump() if app.comaker_info else {},
+                    }
+                    
+                    if app.prediction_result:
+                        try:
+                            pred_result = {
+                                "final_credit_score": app.prediction_result.final_credit_score,
+                                "default": app.prediction_result.default,
+                                "probability_of_default": app.prediction_result.probability_of_default,
+                                "status": app.prediction_result.status,
+                            }
+                            
+                            # Handle loan recommendations
+                            if hasattr(app.prediction_result, 'loan_recommendation') and app.prediction_result.loan_recommendation:
+                                pred_result["loan_recommendation"] = [
+                                    rec if isinstance(rec, dict) else rec.model_dump()
+                                    for rec in app.prediction_result.loan_recommendation
+                                ]
+                                pred_result["recommendation_count"] = len(pred_result["loan_recommendation"])
+                            else:
+                                pred_result["loan_recommendation"] = []
+                                pred_result["recommendation_count"] = 0
+                                
+                            app_data["prediction_result"] = pred_result
+                        except Exception as e:
+                            logger.error(f"Error formatting prediction result: {e}")
+                            app_data["prediction_result"] = None
+                    
+                    formatted_applications.append(app_data)
+            except Exception as e:
+                logger.error(f"Error formatting application data: {e}")
+                raise RuntimeError(f"Data formatting failed: {str(e)}")
+            
+            logger.info(f"Successfully formatted {len(formatted_applications)} applications")
+            # Calculate counts using aggregation pipeline for better performance
+            base_query = {"loan_officer_id": loan_officer_id} if loan_officer_id else {}
+            pipeline = [
+                {"$match": base_query},
+                {"$group": {
+                    "_id": "$status",
+                    "count": {"$sum": 1}
+                }}
+            ]
+            
+            status_counts = {
+                "total": 0,
+                "approved": 0,
+                "denied": 0,
+                "cancelled": 0,
+                "pending": 0
+            }
+            
+            status_result = await LoanApplication.aggregate(pipeline).to_list()
+            for result in status_result:
+                status = result["_id"] or "Pending"  # Default to Pending if status is None
+                count = result["count"]
+                status_counts[status.lower()] = count
+                status_counts["total"] += count
+            
+            return {
+                "data": formatted_applications,
+                "total": total,
+                "page": skip // limit + 1 if limit > 0 else 1,
+                "pages": (total + limit - 1) // limit if limit > 0 else 1,
+                "counts": status_counts
+            }
             
         except Exception as e:
             logger.error(f"Error retrieving loan applications: {e}")
@@ -205,35 +301,35 @@ class LoanApplicationService:
 
     async def update_application_status(
         self, 
-        application_id: UUID, 
+        application_id: str,  # Changed from UUID to str
         new_status: str
     ) -> Optional[LoanApplication]:
-        """
-        Update the status of a loan application.
-        
-        Args:
-            application_id: UUID of the loan application
-            new_status: New status to set
-            
-        Returns:
-            Optional[LoanApplication]: Updated application if found, None otherwise
-        """
         try:
             logger.info(f"Updating status for application {application_id} to: {new_status}")
             
-            # Use find_one to search by application_id field instead of _id
-            application = await LoanApplication.find_one(LoanApplication.application_id == application_id)
+            # Convert string ID to ObjectId and search by _id
+            from bson import ObjectId
+            try:
+                object_id = ObjectId(application_id)
+                logger.info(f"Converted to ObjectId: {object_id}")
+            except Exception as e:
+                logger.error(f"Invalid ObjectId format: {e}")
+                return None
+                
+            application = await LoanApplication.find_one({"_id": object_id})
             if not application:
                 logger.warning(f"Application {application_id} not found for status update")
                 return None
             
-            # Update the status in prediction_result
+            # Update the status field
+            application.status = new_status
+            
+            # Also update the status in prediction_result if it exists
             if application.prediction_result:
                 application.prediction_result.status = new_status
-                await application.save()
-                logger.info(f"Status updated successfully for application {application_id}")
-            else:
-                logger.warning(f"No prediction result found for application {application_id}")
+            
+            await application.save()
+            logger.info(f"Status updated successfully for application {application_id}")
                 
             return application
             
@@ -241,17 +337,88 @@ class LoanApplicationService:
             logger.error(f"Error updating application status: {e}")
             raise RuntimeError(f"Failed to update application status: {str(e)}")
 
+    async def get_loan_application_by_mongo_id(self, mongo_id: str) -> Optional[LoanApplication]:
+        try:
+            from bson import ObjectId
+            logger.info(f"Retrieving loan application with mongo ID: {mongo_id}")
+            
+            application = await LoanApplication.find_one({"_id": ObjectId(mongo_id)})
+            
+            if application:
+                logger.info(f"Loan application {mongo_id} found")
+            else:
+                logger.warning(f"Loan application {mongo_id} not found")
+                
+            return application
+            
+        except Exception as e:
+            logger.error(f"Error retrieving loan application {mongo_id}: {e}")
+            raise RuntimeError(f"Failed to retrieve loan application: {str(e)}")
+
+    async def update_loan_application(
+        self, 
+        application_id: UUID, 
+        update_data: Dict[str, Any],
+        rerun_assessment: bool = False
+    ) -> Optional[LoanApplication]:
+        """Update an existing loan application with new data."""
+        try:
+            logger.info(f"Updating loan application {application_id} with new data")
+            
+            # Get the existing application
+            application = await LoanApplication.find_one(LoanApplication.application_id == application_id)
+            if not application:
+                logger.warning(f"Application {application_id} not found")
+                return None
+
+            # Update each section if provided in update_data
+            if 'applicant_info' in update_data:
+                for key, value in update_data['applicant_info'].items():
+                    setattr(application.applicant_info, key, value)
+
+            if 'comaker_info' in update_data:
+                for key, value in update_data['comaker_info'].items():
+                    setattr(application.comaker_info, key, value)
+
+            if 'model_input_data' in update_data:
+                for key, value in update_data['model_input_data'].items():
+                    setattr(application.model_input_data, key, value)
+
+                if rerun_assessment:
+                    # Re-run prediction with updated model input data
+                    new_prediction = await self._run_prediction(application.model_input_data)
+                    application.prediction_result = new_prediction
+
+                    # Update recommendations if available
+                    if self.recommendation_service:
+                        new_recommendations = self.recommendation_service.get_loan_recommendations(
+                            applicant_info=application.applicant_info,
+                            model_input_data=application.model_input_data.model_dump()
+                        )
+                        application.prediction_result.loan_recommendation = new_recommendations
+
+                    # Generate new AI explanation
+                    if self.ai_service:
+                        await self._generate_and_save_explanation(application)
+
+            # Save updates
+            await application.save()
+            
+            # Generate new AI explanation if model inputs changed
+            if 'model_input_data' in update_data:
+                await self._generate_and_save_explanation(application)
+            
+            logger.info(f"Application {application_id} updated successfully")
+            return application
+
+        except ValueError as e:
+            logger.error(f"Validation error updating application {application_id}: {e}")
+            raise ValueError(f"Invalid update data: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error updating application {application_id}: {e}")
+            raise RuntimeError(f"Failed to update application: {str(e)}")
 
     async def delete_loan_application(self, application_id: UUID) -> bool:
-        """
-        Delete a loan application by its ID.
-        
-        Args:
-            application_id: UUID of the loan application to delete
-            
-        Returns:
-            bool: True if deleted successfully, False if not found
-        """
         try:
             logger.info(f"Deleting loan application with ID: {application_id}")
             
@@ -273,15 +440,6 @@ class LoanApplicationService:
         self, 
         application_id: UUID
     ) -> Optional[List[RecommendedProducts]]:
-        """
-        Regenerate loan recommendations for an existing application.
-        
-        Args:
-            application_id: UUID of the loan application
-            
-        Returns:
-            Optional[List[RecommendedProducts]]: Updated recommendations or None if failed
-        """
         try:
             logger.info(f"Regenerating loan recommendations for application: {application_id}")
             
@@ -313,12 +471,6 @@ class LoanApplicationService:
             return None
 
     async def get_service_status(self) -> Dict[str, Any]:
-        """
-        Get the current status of the loan application service.
-        
-        Returns:
-            Dict[str, Any]: Service status information
-        """
         try:
             # Check if prediction service is available
             prediction_service_status = "healthy" if self.prediction_service else "unavailable"
@@ -361,15 +513,6 @@ class LoanApplicationService:
             raise RuntimeError(f"Failed to get service status: {str(e)}")
 
     def _validate_loan_application_data(self, request_data: FullLoanApplicationRequest) -> None:
-        """
-        Validate loan application data before processing.
-        
-        Args:
-            request_data: The loan application request data
-            
-        Raises:
-            ValueError: If validation fails
-        """
         if not request_data.applicant_info.full_name.strip():
             raise ValueError("Applicant full name is required")
         
@@ -412,18 +555,6 @@ class LoanApplicationService:
             raise ValueError("Late payment count cannot be negative")
 
     async def _run_prediction(self, model_input_data) -> PredictionResult:
-        """
-        Run prediction using the prediction service.
-        
-        Args:
-            model_input_data: Model input data for prediction
-            
-        Returns:
-            PredictionResult: The prediction result
-            
-        Raises:
-            RuntimeError: If prediction fails
-        """
         try:
             logger.info("Running prediction for loan application")
             
@@ -431,8 +562,17 @@ class LoanApplicationService:
             if not self.prediction_service:
                 raise RuntimeError("Prediction service is not available")
             
-            # Run prediction
-            pod_result = self.prediction_service.predict(model_input_data)
+            # Create LoanApplicationRequest instance from the input data
+            from app.schemas.loan_schema import LoanApplicationRequest
+            
+            # Convert model_input_data to dictionary if it's a Pydantic model
+            input_dict = model_input_data.model_dump() if hasattr(model_input_data, 'model_dump') else dict(model_input_data)
+            
+            # Create LoanApplicationRequest instance
+            loan_request = LoanApplicationRequest(**input_dict)
+            
+            # Run prediction with proper input format
+            pod_result = self.prediction_service.predict(loan_request)
             pod = pod_result.get("probability_of_default")
             default = pod_result.get("default_prediction")
             
@@ -460,12 +600,6 @@ class LoanApplicationService:
 
 
 def initialize_loan_application_service() -> Optional[LoanApplicationService]:
-    """
-    Initialize the loan application service.
-    
-    Returns:
-        Optional[LoanApplicationService]: The initialized service or None if failed
-    """
     try:
         logger.info("Initializing LoanApplicationService...")
         

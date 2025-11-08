@@ -2,7 +2,6 @@ from fastapi import HTTPException, status
 from app.database.models import User
 from app.schemas import UserCreate
 from app.core import hash_password, verify_password, create_access_token, is_valid_password
-from app.core.config import settings
 from typing import Dict, Optional
 from datetime import datetime
 
@@ -93,13 +92,13 @@ class AuthService:
         # Create access token
         try:
             access_token = create_access_token(data={"sub": user.email})
+            print(f"DEBUG: Created JWT access token: {access_token}")  # Debug log
         except ValueError as e:
             print(f"DEBUG: Token creation failed: {e}")  # Debug log
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Could not create access token"
             )
-        
         return {
             "access_token": access_token,
             "token_type": "bearer",

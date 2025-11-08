@@ -1,4 +1,5 @@
 from beanie import Document
+from beanie.odm.fields import PydanticObjectId
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -45,11 +46,20 @@ class CoMakerInfo(BaseModel):
     full_name: str = Field(..., description="Full name of the co-maker")
     contact_number: str = Field(..., description="Contact number of the co-maker")
 
+class RecommendedProduct(BaseModel):
+    product_name: str
+    is_top_recommendation: bool
+    max_loanable_amount: float
+    interest_rate_monthly: float
+    term_in_months: int
+    estimated_amortization_per_cutoff: float
+    suitability_score: int
+
 class PredictionResult(BaseModel):
     final_credit_score: int = Field(..., description="Final credit score of the applicant")
     default: int = Field(ge=0, le=1, description="Default status of the applicant (0 for no, 1 for yes)")
     probability_of_default: float = Field(..., description="Probability of default for the applicant")
-    loan_recommendation: List[str] = Field(default=[], description="Loan recommendation based on the credit score and probability of default")
+    loan_recommendation: List[RecommendedProduct] = Field(default=[], description="List of recommended loan products")
     status: str = Field(default="Pending", description="Status of the prediction result")
     risk_level: Optional[str] = Field(None, description="Risk level assessment")
     threshold_used: Optional[float] = Field(None, description="Threshold used for binary classification")
@@ -81,6 +91,7 @@ class LoanApplication(Document):
     application_id: UUID = Field(default_factory=uuid4, description="Unique identifier of the loan application")
     timestamp: datetime = Field(default_factory=datetime.now, description="Timestamp when the loan application was created")
     loan_officer_id: str = Field(..., description="ID of the loan officer handling the application")
+    status: str = Field(default="Pending", description="Current status of the loan application")
 
     applicant_info: ApplicantInfo = Field(..., description="Information about the loan applicant")
     comaker_info: CoMakerInfo = Field(..., description="Information about the co-maker")
@@ -90,6 +101,8 @@ class LoanApplication(Document):
     prediction_result: Optional[PredictionResult] = Field(None, description="Result of the model prediction")
     
     ai_explanation: Optional[AIExplanation] = Field(None, description="Explanation of the AI model's prediction")
+    ai_explanation_status: Optional[str] = Field(None, description="Status of the AI explanation generation (success/failed)")
+    ai_explanation_error: Optional[str] = Field(None, description="Error message if AI explanation generation failed")
 
     class Settings:
         name = "loan_applications"
@@ -99,5 +112,14 @@ class LoanApplication(Document):
         arbitrary_types_allowed = True
         json_encoders = {
             datetime: lambda v: v.isoformat(),
-            UUID: str
+            UUID: str,
+            PydanticObjectId: str  # Add this encoder
+        }
+        json_schema_extra = {
+            "example": {
+                "application_id": "123e4567-e89b-12d3-a456-426614174000",
+                "timestamp": "2025-01-01T00:00:00",
+                "loan_officer_id": "5f7b5d8a9c1b2e3f4a5d6c7e",
+                "status": "Pending"
+            }
         }

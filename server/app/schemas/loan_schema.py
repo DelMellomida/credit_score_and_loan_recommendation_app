@@ -73,6 +73,12 @@ class CommunityRoleEnum(str, Enum):
     leader = "Leader"
     multiple_leader = "Multiple Leader"
 
+class ApplicationStatusEnum(str, Enum):
+    pending = "Pending"
+    approved = "Approved"
+    denied = "Denied"
+    cancelled = "Cancelled"
+
 class LoanApplicationRequest(BaseModel):
     """Defines all the fields a loan officer must submit for a prediction."""
     Employment_Sector: EmploymentSectorEnum
@@ -101,7 +107,7 @@ class ApplicantInfo(BaseModel):
     contact_number: str
     address: str
     salary: str
-    job: str
+    job: JobEnum
 
 class CoMakerInfo(BaseModel):
     """Schema for the co-maker's personal info."""
@@ -128,8 +134,8 @@ class PredictionResult(BaseModel):
     final_credit_score: int
     default: int = Field(ge=0, le=1, description="Default status of the applicant (0 for no, 1 for yes)")
     probability_of_default: float
-    loan_recommendation: List[Dict]
-    status: str = Field(default="Pending", description="Status of the prediction result")
+    loan_recommendation: List[RecommendedProducts]
+    status: ApplicationStatusEnum = Field(default=ApplicationStatusEnum.pending, description="Status of the prediction result")
     risk_level: Optional[str] = Field(None, description="Risk level assessment")
     threshold_used: Optional[float] = Field(None, description="Threshold used for binary classification")
     cultural_component_scores: Optional[CulturalComponentScores] = Field(None, description="Cultural component scores")
@@ -152,7 +158,7 @@ class FullLoanApplicationResponse(BaseModel):
     message: str
     application_id: str
     timestamp: str
-    status: str
+    status: ApplicationStatusEnum
     prediction_result: PredictionResult
     applicant_info: ApplicantInfo
     loan_officer_id: str

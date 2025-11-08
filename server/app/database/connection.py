@@ -1,6 +1,6 @@
 import motor.motor_asyncio
 from beanie import init_beanie
-from app.database.models import User, LoanApplication
+from app.database.models import User, LoanApplication, ApplicationDocument
 from app.core import Settings  # Use your existing import
 import logging
 
@@ -29,9 +29,18 @@ async def init_db():
             logger.error("MONGODB_DB_NAME is not set in environment variables")
             raise ValueError("MONGODB_DB_NAME is not set in environment variables")
         
-        # Create MongoDB client
-        logger.info("Creating MongoDB client...")
-        client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+        # Create MongoDB client with SSL workaround for Render
+        logger.info("Creating MongoDB client with SSL workaround...")
+        client = motor.motor_asyncio.AsyncIOMotorClient(
+            mongodb_uri,
+            tls=True,
+            tlsAllowInvalidCertificates=True,  # Workaround for Render SSL issues
+            serverSelectionTimeoutMS=30000,
+            connectTimeoutMS=30000,
+            socketTimeoutMS=30000,
+            retryWrites=True,
+            w='majority'
+        )
         
         # Test the connection
         logger.info("Testing MongoDB connection...")
@@ -43,8 +52,8 @@ async def init_db():
         database = client[mongodb_db_name]
         
         # Initialize Beanie with document models
-        logger.info("Initializing Beanie with User model...")
-        await init_beanie(database, document_models=[User, LoanApplication])
+        logger.info("Initializing Beanie with document models...")
+        await init_beanie(database, document_models=[User, LoanApplication, ApplicationDocument])
         logger.info("Beanie initialized successfully!")
         
         return database
