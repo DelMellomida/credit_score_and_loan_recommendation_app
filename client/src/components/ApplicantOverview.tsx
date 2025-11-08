@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
 import {
@@ -101,6 +102,21 @@ interface ApplicationData {
   documents?: Record<string, string | null>;
 }
 
+// Helper to convert months to years/months format
+function convertMonthsToYearsMonths(months: number): string {
+  if (months <= 6) return "6 months";
+  const years = Math.floor(months / 12);
+  if (years === 1) return "1 year";
+  if (years === 2) return "2 years";
+  if (years === 3) return "3 years";
+  if (years === 5) return "5 years";
+  if (years >= 10) return "10 years";
+  // Default to closest option
+  if (years === 4) return "5 years";
+  if (years > 5 && years < 10) return "5 years";
+  return "1 year"; // fallback
+}
+
 export function ApplicantOverview({
   applicant,
   onBack,
@@ -120,12 +136,8 @@ export function ApplicantOverview({
              'High Risk'
     };
   };
-  console.log('Applicant Data:', {
-    fullApplicant: applicant,
-    formData: applicant.formData,
-    modelInputData: applicant.formData.other,
-    paluwagan: applicant.formData.other.paluwagaParticipation
-  });
+  // Log only non-sensitive data
+  console.log('Processing application update');
   const { user } = useAuth();
   const [applicationData, setApplicationData] = useState<ApplicationData | null>(null);
   const [editableData, setEditableData] = useState<CustomFormData>(applicant.formData);
@@ -185,7 +197,7 @@ export function ApplicantOverview({
       ].some(url => url && isUrlExpiringSoon(url));
 
       if (anyExpiringSoon) {
-        console.log('Some URLs are expiring soon, refreshing...');
+        // Document URLs need to be refreshed
         await refreshSignedUrls();
       }
     };
@@ -202,9 +214,7 @@ export function ApplicantOverview({
         }
 
         // First get the complete loan application using MongoDB _id
-        console.log('Fetching complete application data for:', applicant.id);
         const response = await getLoanApplication(applicant.id, user.token);
-        console.log('Received application data:', response);
         setApplicationData(response);  // Store the application data in state
 
         // Extract the application_id (UUID) from the application details
@@ -215,21 +225,18 @@ export function ApplicantOverview({
           : '';
 
         if (!applicationId) {
-          console.warn('No application_id found in application data, cannot fetch documents.');
+          console.warn('Missing required application data.');
         } else {
           // store the application UUID for later refresh attempts
           setApplicationUUID(applicationId);
           // Then get the document URLs using the application_id (UUID)
-          console.log('Fetching document URLs for application_id:', applicationId);
           const documentResponse = await getApplicationDocuments(applicationId, user.token) as Record<string, string | null>;
-          console.log('Received document URLs:', documentResponse);
-
           if (documentResponse) {
             // Set document previews
             const previews = { ...documentPreviews };
             Object.entries(documentResponse).forEach(([key, value]) => {
               if (value && typeof value === 'string') {
-                console.log(`Setting preview for ${key}:`, value.substring(0, 100));
+                // Preview is being set
                 // Map snake_case keys (and variants) to camelCase
                 const profileKeys = ['profile_photo_url', 'profile_photo', 'profilePhoto'];
                 const idKeys = ['valid_id_url', 'valid_id', 'idPhoto'];
@@ -261,7 +268,7 @@ export function ApplicantOverview({
                 }
               }
             });
-            console.log('Updated previews:', previews);
+            // Document previews have been updated
             setDocumentPreviews(previews);
           }
         }
@@ -270,11 +277,27 @@ export function ApplicantOverview({
         if (response) {
           // Cast to any since we know the structure is compatible but types don't fully match
           const transformedData = transformToApplicant(response as any);
+          
+          // Convert employment durations from months to years/months format
+          if (response.model_input_data) {
+            // Applicant employment duration
+            if (response.model_input_data.Employment_Tenure_Months) {
+              transformedData.formData.employee.employmentDuration = 
+                convertMonthsToYearsMonths(response.model_input_data.Employment_Tenure_Months);
+            }
+            
+            // Co-maker employment duration
+            if (response.model_input_data.Comaker_Employment_Tenure_Months) {
+              transformedData.formData.coMaker.howManyMonthsYears = 
+                convertMonthsToYearsMonths(response.model_input_data.Comaker_Employment_Tenure_Months);
+            }
+          }
+
           setEditableData(transformedData.formData);
         }
 
       } catch (error) {
-        console.error('Error fetching application data:', error);
+        console.error('Failed to load application data');
       }
     };
 
@@ -464,20 +487,29 @@ export function ApplicantOverview({
     }
   };
 
-  const handleFileUpload = async (type: 'profile' | 'id' | keyof typeof documents, e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileUpload = async (type: 'profile' | 'id' | keyof typeof documents, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !applicationUUID || !user?.token) return;
 
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      toast.error("Invalid file type", {
-        description: "Please upload an image file (JPEG, PNG, etc.)",
+    // Validate file size (5MB limit)
+    const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
+    if (file.size > MAX_FILE_SIZE) {
+      toast.error("File too large", {
+        description: "Please upload a file smaller than 5MB",
         duration: 3000,
       });
       return;
     }
 
-    const fieldMap: Record<string, string> = {
+    // Validate file type and create metadata
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp', 'application/pdf'];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error("Invalid file type", {
+        description: "Please upload an image file (JPEG, PNG) or PDF",
+        duration: 3000,
+      });
+      return;
+    }    const fieldMap: Record<string, string> = {
       'profile': 'profilePhoto',
       'id': 'validId',
       'brgyCert': 'brgyCert',
@@ -502,7 +534,20 @@ export function ApplicantOverview({
     const fieldName = fieldMap[type];
     const docType = docFieldMap[type];
     const formData = new FormData();
+    
+    // Create document metadata
+    const metadata = {
+      documentType: docType,
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type,
+      applicationId: applicationUUID,
+      uploadTimestamp: new Date().toISOString()
+    };
+    
+    // Append both file and metadata
     formData.append(fieldName, file);
+    formData.append(`${fieldName}_metadata`, JSON.stringify(metadata));
     
     // Create temporary preview
     const tempObjectUrl = URL.createObjectURL(file);
@@ -529,8 +574,22 @@ export function ApplicantOverview({
         setDocumentPreviews(prev => ({ ...prev, [type]: tempObjectUrl }));
       }
 
-      // Upload the file - this handles both delete and upload
-      await uploadDocuments(applicationUUID, formData, user.token);
+      // Upload the file with retry logic
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      while (retryCount < maxRetries) {
+        try {
+          const response = await uploadDocuments(applicationUUID, formData, user.token);
+          if (!response) throw new Error('Upload failed - no response');
+          break; // Success - exit retry loop
+        } catch (uploadError) {
+          retryCount++;
+          if (retryCount === maxRetries) throw uploadError;
+          // Exponential backoff
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+        }
+      }
       
       // Wait for processing
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -605,6 +664,7 @@ export function ApplicantOverview({
       toast.success("Document uploaded successfully", {
         id: toastId,
         description: "File has been processed and saved",
+        duration: 4000
       });
 
       // Force a re-render by triggering a state update
@@ -669,7 +729,14 @@ export function ApplicantOverview({
         model_input_data: {
           Employment_Sector: editableData.employee.sector === "Public" ? "Public" : 
                            editableData.employee.sector === "Private" ? "Private" : "Private",
-          Employment_Tenure_Months: Math.max(1, parseInt(editableData.employee.employmentDuration?.split(' ')[0]) || 1),
+          Employment_Tenure_Months: (() => {
+              const duration = editableData.employee.employmentDuration || '';
+              const yearsMatch = duration.match(/(\d+)\s*years?/i);
+              const monthsMatch = duration.match(/(\d+)\s*months?/i);
+              const years = yearsMatch ? parseInt(yearsMatch[1]) : 0;
+              const months = monthsMatch ? parseInt(monthsMatch[1]) : 0;
+              return Math.max(1, (years * 12) + months);
+          })(),
           Net_Salary_Per_Cutoff: Math.max(1, parseFloat(editableData.employee.salary?.replace(/[₱,]/g, '')) || 1),
           Salary_Frequency: editableData.employee.typeOfSalary === "Bimonthly" ? "Bimonthly" :
                           editableData.employee.typeOfSalary === "Biweekly" ? "Biweekly" :
@@ -681,7 +748,14 @@ export function ApplicantOverview({
           Comaker_Relationship: editableData.coMaker.relationshipWithApplicant === "Spouse" ? "Spouse" :
                               editableData.coMaker.relationshipWithApplicant === "Sibling" ? "Sibling" :
                               editableData.coMaker.relationshipWithApplicant === "Parent" ? "Parent" : "Friend",
-          Comaker_Employment_Tenure_Months: Math.max(1, parseInt(editableData.coMaker.howManyMonthsYears?.split(' ')[0]) || 1),
+          Comaker_Employment_Tenure_Months: (() => {
+              const duration = editableData.coMaker.howManyMonthsYears || '';
+              const yearsMatch = duration.match(/(\d+)\s*years?/i);
+              const monthsMatch = duration.match(/(\d+)\s*months?/i);
+              const years = yearsMatch ? parseInt(yearsMatch[1]) : 0;
+              const months = monthsMatch ? parseInt(monthsMatch[1]) : 0;
+              return Math.max(1, (years * 12) + months);
+          })(),
           Comaker_Net_Salary_Per_Cutoff: Math.max(1, parseFloat(editableData.coMaker.salary?.replace(/[₱,]/g, '')) || 1),
           Has_Community_Role: editableData.other.communityPosition === "Member" ? "Member" :
                             editableData.other.communityPosition === "Leader" ? "Leader" :
@@ -711,15 +785,34 @@ export function ApplicantOverview({
         throw new Error("Invalid application ID");
       }
 
+      console.log('Preparing FormData for update...');
+      
       // Add the request data to FormData
       formData.append('request_data', JSON.stringify(reqData));
+      
+      // Only append files if they are actually being updated
+      // This is tracked in the documents state for regular documents
+      Object.entries(documents).forEach(([key, file]) => {
+        if (file) {
+          formData.append(key, file);
+        }
+      });
 
+      console.log('FormData prepared:', {
+        hasRequestData: formData.has('request_data'),
+        containsFiles: Array.from(formData.keys()).filter(key => key !== 'request_data')
+      });
+
+      console.log('Making update request...');
+      
       // Call the update API
       const response = await updateLoanApplication(
         mongoId,
         formData,
         user.token
       );
+
+      console.log('Update response:', response);
 
       // Show success message
       toast.success("Application Updated", {
@@ -729,9 +822,6 @@ export function ApplicantOverview({
       // Notify parent component
       onSave({
         formData: editableData,
-        // documents,
-        // profilePhoto,
-        // idPhoto,
       });
     } catch (error) {
       console.error('Error updating application:', error);
@@ -1090,10 +1180,18 @@ export function ApplicantOverview({
                   />
                   <div>
                     <Label>Employment Duration</Label>
-                    <Input
+                    <select
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
                       value={editableData.employee.employmentDuration}
                       onChange={(e) => handleInputChange('employee', 'employmentDuration', e.target.value)}
-                    />
+                    >
+                      <option value="6 months">6 months</option>
+                      <option value="1 year">1 year</option>
+                      <option value="2 years">2 years</option>
+                      <option value="3 years">3 years</option>
+                      <option value="5 years">5 years</option>
+                      <option value="10 years">10 years</option>
+                    </select>
                   </div>
                   <div>
                     <Label>Salary</Label>
@@ -1110,9 +1208,9 @@ export function ApplicantOverview({
                       onChange={(e) => handleInputChange('employee', 'typeOfSalary', e.target.value)}
                     >
                       <option value="Monthly">Monthly</option>
-                      <option value="Semi-Monthly">Semi-Monthly</option>
+                      <option value="Bimonthly">Bimonthly</option>
+                      <option value="Biweekly">Biweekly</option>
                       <option value="Weekly">Weekly</option>
-                      <option value="Daily">Daily</option>
                     </select>
                   </div>
                 </div>
@@ -1142,24 +1240,37 @@ export function ApplicantOverview({
                       value={editableData.other.paluwagaParticipation || "None"}
                       onChange={(e) => handleInputChange('other', 'paluwagaParticipation', e.target.value)}
                     >
-                      <option value="None">None</option>
-                      <option value="Participant">Participant</option>
-                      <option value="Host">Host</option>
+                      <option value="Never">Never</option>
+                      <option value="Rarely">Rarely</option>
+                      <option value="Sometimes">Sometimes</option>
+                      <option value="Frequently">Frequently</option>
                     </select>
                   </div>
                   <div className="col-span-2">
                     <Label>Other Income Sources</Label>
-                    <Input
-                      value={editableData.other.otherIncomeSources}
+                    <select
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+                      value={editableData.other.otherIncomeSources || "None"}
                       onChange={(e) => handleInputChange('other', 'otherIncomeSources', e.target.value)}
-                    />
+                    >
+                      <option value="None">None</option>
+                      <option value="OFW Remittance">OFW Remittance</option>
+                      <option value="Freelance">Freelance</option>
+                      <option value="Business">Business</option>
+                    </select>
                   </div>
                   <div className="col-span-2">
                     <Label>Disaster Preparedness Strategy</Label>
-                    <Input
-                      value={editableData.other.disasterPreparednessStrategy}
+                    <select
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+                      value={editableData.other.disasterPreparednessStrategy || "None"}
                       onChange={(e) => handleInputChange('other', 'disasterPreparednessStrategy', e.target.value)}
-                    />
+                    >
+                      <option value="None">None</option>
+                      <option value="Savings">Savings</option>
+                      <option value="Insurance">Insurance</option>
+                      <option value="Community Plan">Community Plan</option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -1190,11 +1301,19 @@ export function ApplicantOverview({
                     />
                   </div>
                   <div>
-                    <Label>How Many Months/Years</Label>
-                    <Input
+                    <Label>Employment Duration</Label>
+                    <select
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
                       value={editableData.coMaker.howManyMonthsYears}
                       onChange={(e) => handleInputChange('coMaker', 'howManyMonthsYears', e.target.value)}
-                    />
+                    >
+                      <option value="6 months">6 months</option>
+                      <option value="1 year">1 year</option>
+                      <option value="2 years">2 years</option>
+                      <option value="3 years">3 years</option>
+                      <option value="5 years">5 years</option>
+                      <option value="10 years">10 years</option>
+                    </select>
                   </div>
                   <div>
                     <Label>Salary</Label>
@@ -1205,10 +1324,16 @@ export function ApplicantOverview({
                   </div>
                   <div className="col-span-2">
                     <Label>Relationship with Applicant</Label>
-                    <Input
-                      value={editableData.coMaker.relationshipWithApplicant}
+                    <select
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+                      value={editableData.coMaker.relationshipWithApplicant || "Friend"}
                       onChange={(e) => handleInputChange('coMaker', 'relationshipWithApplicant', e.target.value)}
-                    />
+                    >
+                      <option value="Friend">Friend</option>
+                      <option value="Spouse">Spouse</option>
+                      <option value="Sibling">Sibling</option>
+                      <option value="Parent">Parent</option>
+                    </select>
                   </div>
                 </div>
               </div>

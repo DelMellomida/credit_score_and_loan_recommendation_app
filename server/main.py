@@ -21,9 +21,19 @@ app = FastAPI(
 )
 
 # Add CORS middleware
+# Support comma-separated CLIENT_URL values (e.g. "http://localhost:3000,http://localhost:3001")
+raw_origins = settings.CLIENT_URL or ""
+allowed_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
+
+# Always include both development ports
+if not allowed_origins or any("localhost" in origin for origin in allowed_origins):
+    allowed_origins = list(set(allowed_origins + ["http://localhost:3000", "http://localhost:3001"]))
+
+print(f"DEBUG: CORS allowed origins: {allowed_origins}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.CLIENT_URL],  # Change this in production
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
