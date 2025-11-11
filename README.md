@@ -2,6 +2,9 @@
 
 A modern, AI-powered loan processing system that combines credit scoring with intelligent loan product recommendations. This application helps financial institutions streamline their loan application process while providing data-driven decisions and personalized loan recommendations.
 
+Link: <https://thesis-credit-score-loan-applicatio.vercel.app/>
+API: <https://thesis-credit-score-loan-application-6haa.onrender.com>
+
 ## Table of Contents
 - [Features](#features)
 - [Technologies Used](#technologies-used)
@@ -205,4 +208,8 @@ The application will be available at:
 5. Open a Pull Request
 
 ---
-Built with ❤️ by [DelMellomida](https://github.com/DelMellomida)
+
+Thesis by: 
+- Shana Eve Gonzales
+- Louise Guiaya
+- Jhondel Mellomida
