@@ -1,4 +1,15 @@
-Traceback (most recent call last):
+REDACTED: This log file contained sensitive tokens, signed URLs, and credential material.
+To protect secrets these entries have been removed from the repository.
+If you need the original logs for debugging, retrieve them from a secure backup or local machine copies and rotate any exposed secrets (Supabase tokens, JWTs, DB credentials) immediately.
+
+Actions taken:
+- Replaced signed URL token query params in `server/docs.json` with "<redacted>".
+- Removed historical log content from this file and replaced with this notice.
+
+Recommended next steps:
+1) Rotate any exposed tokens/keys that previously appeared in these logs (Supabase tokens, JWT signing keys, DB credentials).
+2) Add `server/logs/` to `.gitignore` to avoid committing runtime logs in the future.
+3) Consider running `git filter-repo` or `git filter-branch` to purge tokens from history if this repo has been pushed to a remote.Traceback (most recent call last):
   File "/usr/local/lib/python3.11/site-packages/pydantic/networks.py", line 352, in import_email_validator
     import email_validator
 ModuleNotFoundError: No module named 'email_validator'
