@@ -113,10 +113,10 @@ async def create_loan_application(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in loan application creation: {e}")
+        logger.error("Error in loan application creation")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred while processing the application: {str(e)}"
+            detail="An error occurred while processing the application"
         )
 
 # @router.post("/applications/demo", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
@@ -162,7 +162,7 @@ async def create_loan_application(
 #     Perfect for presentations where you want to fill out fields one by one.
 #     """
 #     try:
-#         logger.info(f"Starting demo loan application creation for user: {current_user['email']}")
+#         logger.info("Starting demo loan application creation")
         
 #         # Get loan officer ID from authenticated user
 #         loan_officer_id = current_user["id"]
@@ -271,7 +271,7 @@ async def create_loan_application(
 #             logger.error(f"Error saving to database: {e}")
 #             raise RuntimeError(f"Database error: {e}")
         
-#         logger.info(f"Demo loan application created successfully with ID: {loan_application.application_id}")
+#         logger.info("Demo loan application created successfully")
         
 #         return {
 #             "message": "Demo loan application created successfully",
@@ -445,10 +445,10 @@ async def get_loan_application(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrieving loan application {application_id}: {e}")
+        logger.error("Error retrieving loan application")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving loan application: {str(e)}"
+            detail="Error retrieving loan application"
         )
             
     return response
@@ -489,24 +489,52 @@ async def update_loan_application(
                 detail=f"Loan application with ID {application_id} not found"
             )
 
-        # Update document files if provided
-        document_files = {}
-        if profilePhoto:
-            document_files["profile_photo"] = profilePhoto
-        if validId:
-            document_files["valid_id"] = validId
-        if brgyCert:
-            document_files["brgy_cert"] = brgyCert
-        if eSignaturePersonal:
-            document_files["e_signature_personal"] = eSignaturePersonal
-        if payslip:
-            document_files["payslip"] = payslip
-        if companyId:
-            document_files["company_id"] = companyId
-        if proofOfBilling:
-            document_files["proof_of_billing"] = proofOfBilling
-        if eSignatureCoMaker:
-            document_files["e_signature_comaker"] = eSignatureCoMaker
+        try:
+            # Clean and validate the update data
+            update_data = {}
+            
+            if 'applicant_info' in data_dict:
+                # Merge with existing data to maintain required fields
+                current_applicant = application.applicant_info.model_dump()
+                current_applicant.update(data_dict['applicant_info'])
+                update_data['applicant_info'] = current_applicant
+
+            if 'comaker_info' in data_dict:
+                current_comaker = application.comaker_info.model_dump()
+                current_comaker.update(data_dict['comaker_info'])
+                update_data['comaker_info'] = current_comaker
+
+            if 'model_input_data' in data_dict:
+                current_model_input = application.model_input_data.model_dump()
+                current_model_input.update(data_dict['model_input_data'])
+                update_data['model_input_data'] = current_model_input
+
+            # Handle document files if provided
+            document_files = {}
+            if profilePhoto:
+                document_files["profile_photo"] = profilePhoto
+            if validId:
+                document_files["valid_id"] = validId
+            if brgyCert:
+                document_files["brgy_cert"] = brgyCert
+            if eSignaturePersonal:
+                document_files["e_signature_personal"] = eSignaturePersonal
+            if payslip:
+                document_files["payslip"] = payslip
+            if companyId:
+                document_files["company_id"] = companyId
+            if proofOfBilling:
+                document_files["proof_of_billing"] = proofOfBilling
+            if eSignatureCoMaker:
+                document_files["e_signature_comaker"] = eSignatureCoMaker
+
+            logger.info("Application data processed for update")
+        except Exception as e:
+            logger.error(f"Error processing update data: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid update data structure: {str(e)}"
+            )
 
         # If there are document updates, process them
         if document_files:
@@ -519,16 +547,22 @@ async def update_loan_application(
 
             # Update document URLs in database
             from app.database.models.document_model import ApplicationDocument
-            await ApplicationDocument.find_one(
+            doc = await ApplicationDocument.find_one(
                 ApplicationDocument.application_id == str(application.application_id)
-            ).update({"$set": document_urls})
+            )
+            if doc:
+                await doc.update({"$set": document_urls})
 
-        # Update application data and run reassessment
-        updated_application = await service.update_loan_application(
-            application.application_id, 
-            data_dict,
-            rerun_assessment=True
-        )
+        # Update application data and run reassessment only if we have data updates
+        if update_data:
+            updated_application = await service.update_loan_application(
+                application.application_id, 
+                update_data,
+                rerun_assessment=True
+            )
+        else:
+            # If only files were updated, return the current application
+            updated_application = application
 
         if not updated_application:
             raise HTTPException(
@@ -568,6 +602,8 @@ async def get_loan_applications(
     skip: int = Query(default=0, ge=0, description="Number of records to skip"),
     limit: int = Query(default=6, ge=1, le=1000, description="Maximum number of records to return"),
     loan_officer_id: Optional[str] = Query(default=None, description="Filter by loan officer ID"),
+    status: Optional[str] = Query(default=None, description="Filter by application status"),
+    search: Optional[str] = Query(default=None, description="Search in applicant name, email, or loan details"),
     include_ai_explanation: bool = Query(default=False, description="Include AI explanations in response"),
     current_user: Dict = Depends(get_current_user),
     service: LoanApplicationService = Depends(get_loan_application_service)
@@ -582,34 +618,21 @@ async def get_loan_applications(
                     detail="No loan officer ID provided and couldn't get it from current user"
                 )
         
-        logger.info(f"Fetching applications for officer {loan_officer_id} (skip={skip}, limit={limit})")
-        try:
-            result = await service.get_loan_applications(
-                skip=skip,
-                limit=limit,
-                loan_officer_id=loan_officer_id
-            )
-            logger.info(f"Successfully retrieved {len(result.get('data', []))} applications")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Service error in get_loan_applications: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error retrieving applications: {str(e)}"
-            )
-            
+        logger.info("Processing loan application request")
+        result = await service.get_loan_applications(
+            skip=skip,
+            limit=limit,
+            loan_officer_id=loan_officer_id,
+            status=status,
+            search=search
+        )
+        logger.info("Application data retrieved successfully")
+        return result
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in get_loan_applications: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred while retrieving applications"
-        )
-        
-    except Exception as e:
-        logger.error(f"Error retrieving loan applications: {e}")
+        logger.error("Error retrieving loan applications")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while retrieving applications"
@@ -659,10 +682,10 @@ async def get_my_loan_applications(
         return response_data
         
     except Exception as e:
-        logger.error(f"Error retrieving user's loan applications: {e}")
+        logger.error("Error retrieving loan applications")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while retrieving your applications"
+            detail="An error occurred while retrieving applications"
         )
 
 @router.put("/applications/{application_id}/status")
@@ -677,9 +700,7 @@ async def update_application_status(
     Only accessible to authenticated users.
     """
     try:
-        logger.info(f"Received status update request: {status_update}")
         new_status = status_update.get("status")
-        logger.info(f"Extracted status: {new_status}")
         
         if not new_status:
             logger.error("No status provided in request")
@@ -690,12 +711,11 @@ async def update_application_status(
         
         # Validate status value using the enum (case-insensitive)
         try:
-            logger.info(f"Attempting to validate status: {new_status}")
-            logger.info(f"Valid statuses are: {[s.value for s in ApplicationStatusEnum]}")
+            logger.info("Validating requested status update")
             # Convert input to title case to match enum values
             normalized_status = new_status.title()
             status_enum = ApplicationStatusEnum(normalized_status)
-            logger.info(f"Status validated successfully as: {status_enum.value}")
+            logger.info("Status validation completed")
             # Use the validated enum value
             new_status = status_enum.value
         except ValueError as e:
@@ -727,7 +747,7 @@ async def update_application_status(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error updating application status: {e}")
+        logger.error("Error updating application status")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while updating the application status"
@@ -761,7 +781,7 @@ async def regenerate_loan_recommendations(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error regenerating recommendations for application {application_id}: {e}")
+        logger.error("Error regenerating loan recommendations")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while regenerating recommendations"
@@ -809,7 +829,7 @@ async def delete_loan_application(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting loan application {application_id}: {e}")
+        logger.error("Error deleting loan application")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while deleting the application"
@@ -828,7 +848,7 @@ async def health_check() -> Dict[str, str]:
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
+        logger.error("Health check failed")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Health check failed"
@@ -844,14 +864,14 @@ async def get_service_status(
     Only accessible to authenticated users.
     """
     try:
-        logger.info(f"Retrieving loan service status for user: {current_user['email']}")
+        logger.info("Retrieving loan service status")
         status_info = await service.get_service_status()
         
-        logger.info("Loan service status retrieved successfully")
+        logger.info("Status check completed")
         return status_info
         
     except Exception as e:
-        logger.error(f"Error retrieving service status: {e}")
+        logger.error("Error retrieving service status")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unable to retrieve service status"
